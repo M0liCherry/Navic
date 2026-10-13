@@ -46,7 +46,7 @@ A modern (Open)Subsonic music streaming app for Android.
 
 1. Install Navic through one of [the many supported methods](https://navic.app/downloads).
    
-   Play Protect may falsely flag Navic, see [this post](https://github.com/ssalggnikool/Navic/discussions/546).
+   Play Protect may falsely flag Navic, see [this page](https://codeberg.org/paige/Navic/wiki/Play-Protect).
 2. After opening Navic, log into a supported (Open)Subsonic music server.
    
    If you don't already have one, there are countless guides online for setting one up. Some servers that support (Open)Subsonic are [LMS](https://github.com/epoupon/lms), [gonic](https://github.com/sentriz/gonic), [Navidrome](https://navidrome.org), and of course, [Subsonic](https://subsonic.org) itself.
