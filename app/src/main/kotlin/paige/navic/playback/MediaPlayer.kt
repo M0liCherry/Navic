@@ -640,7 +640,7 @@ class MediaPlayer(
 			albumTitle = "Live Stream",
 			duration = Duration.ZERO,
 			trackNumber = 1,
-			coverArtId = null,
+			coverArtId = radio.coverArtId,
 			artistId = "",
 			parentId = "",
 			comment = null,

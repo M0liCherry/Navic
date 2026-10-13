@@ -50,7 +50,6 @@ import paige.navic.ui.icons.Icons
 import paige.navic.ui.icons.filled.Note
 import paige.navic.ui.icons.outlined.Menu
 import paige.navic.ui.icons.outlined.MenuOpen
-import paige.navic.ui.icons.outlined.Radio
 import paige.navic.playback.MediaPlayer
 import paige.navic.ui.component.common.CoverArt
 import paige.navic.ui.component.common.WideNavigationRailItem
@@ -131,7 +130,6 @@ private fun SideBarMiniPlayer(
 	val player = koinInject<MediaPlayer>()
 	val playerState by player.uiState.collectAsStateWithLifecycle()
 	val song = playerState.currentSong
-	val isRadio = song?.id?.startsWith("radio_") == true
 
 	val padding by animateDpAsState(
 		if (railExpanded) 8.dp else 0.dp,
@@ -163,7 +161,7 @@ private fun SideBarMiniPlayer(
 				)
 				if (song?.coverArtId.isNullOrEmpty()) {
 					Icon(
-						imageVector = if (isRadio) Icons.Outlined.Radio else Icons.Filled.Note,
+						imageVector = Icons.Filled.Note,
 						contentDescription = null,
 						tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .38f)
 					)

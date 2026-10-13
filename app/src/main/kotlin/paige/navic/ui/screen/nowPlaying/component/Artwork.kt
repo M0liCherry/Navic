@@ -38,8 +38,6 @@ fun NowPlayingArtwork(
 	val player = koinInject<MediaPlayer>()
 	val playerState by player.uiState.collectAsState()
 
-	val isRadio = song.id.startsWith("radio_")
-
 	val padding by animateDpAsState(
 		targetValue = if (playerState.isPaused || playerState.currentSong?.id != song.id)
 			48.dp
@@ -57,9 +55,9 @@ fun NowPlayingArtwork(
 			shadowElevation = 8.dp,
 			onClick = onClick
 		)
-		if (song.coverArtId.isNullOrEmpty()) {
+		if (song.coverArtId == null) {
 			Icon(
-				imageVector = if (isRadio) Icons.Outlined.Radio else Icons.Filled.Note,
+				imageVector = Icons.Filled.Note,
 				contentDescription = null,
 				tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .38f),
 				modifier = Modifier.size(96.dp)

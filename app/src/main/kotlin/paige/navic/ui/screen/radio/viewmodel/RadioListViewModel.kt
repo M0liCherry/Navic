@@ -10,6 +10,8 @@ import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.lifecycle.viewModelScope
 import androidx.paging.PagingData
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
 import paige.navic.domain.manager.SessionManager
 import paige.navic.domain.model.DomainRadio
@@ -22,9 +24,18 @@ class RadioListViewModel(
 ) : AsyncViewModel<Flow<PagingData<DomainRadio>>>() {
 	val gridState = LazyGridState()
 
+	val selectedRadio: StateFlow<DomainRadio?>
+		field = MutableStateFlow<DomainRadio?>(null)
+
 	init {
 		viewModelScope.launch {
 			sessionManager.isLoggedIn.collect { if (it) refreshRadios(false) }
+		}
+	}
+
+	fun selectRadio(radio: DomainRadio?) {
+		viewModelScope.launch {
+			selectedRadio.value = radio
 		}
 	}
 

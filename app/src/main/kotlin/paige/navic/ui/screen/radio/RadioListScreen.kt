@@ -29,7 +29,6 @@ import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -40,6 +39,7 @@ import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
 import androidx.paging.compose.collectAsLazyPagingItems
 import org.koin.compose.koinInject
@@ -55,17 +55,23 @@ import paige.navic.ui.icons.Icons
 import paige.navic.ui.icons.outlined.Add
 import paige.navic.playback.MediaPlayer
 import paige.navic.ui.component.common.ContentUnavailable
+import paige.navic.ui.component.dialog.DeletionDialog
+import paige.navic.ui.component.dialog.DeletionEndpoint
 import paige.navic.ui.component.layout.ArtGrid
 import paige.navic.ui.component.layout.NestedTopBar
 import paige.navic.ui.component.layout.PullToRefreshBox
 import paige.navic.ui.component.layout.RootBottomBar
 import paige.navic.ui.component.layout.RootTopBar
+import paige.navic.ui.component.sheet.RadioSheet
 import paige.navic.ui.component.snackbar.ErrorSnackBar
 import paige.navic.ui.core.UiState
+import paige.navic.ui.icons.Icons
+import paige.navic.ui.icons.outlined.Add
 import paige.navic.ui.navigation.PersistentViewModelStoreOwner
 import paige.navic.ui.screen.radio.component.RadioListScreenCard
 import paige.navic.ui.screen.radio.component.RadioListScreenCardPlaceholder
 import paige.navic.ui.screen.radio.dialog.RadioCreateDialog
+import paige.navic.ui.screen.radio.dialog.RadioUpdateDialog
 import paige.navic.ui.screen.radio.viewmodel.RadioListViewModel
 import paige.navic.ui.util.withoutTop
 import paige.navic.ui.viewmodel.RootViewModel
@@ -90,6 +96,8 @@ fun RadioListScreen(
 	val slideSpec = MaterialTheme.motionScheme.defaultSpatialSpec<IntOffset>()
 	val scaleInSpec = MaterialTheme.motionScheme.fastSpatialSpec<Float>()
 	var createDialogShown by rememberSaveable { mutableStateOf(false) }
+	var updateDialogShown by rememberSaveable { mutableStateOf(false) }
+	var deleteDialogShown by rememberSaveable { mutableStateOf(false) }
 	val preferenceManager = koinInject<PreferenceManager>()
 
 	val rootViewModel = koinViewModel<RootViewModel>()
@@ -182,9 +190,8 @@ fun RadioListScreen(
 								RadioListScreenCard(
 									modifier = Modifier.animateItem(),
 									radio = radio,
-									onPlayClick = {
-										player.playRadio(radio)
-									}
+									onRadioClick = player::playRadio,
+									onRadioLongClick = viewModel::selectRadio
 								)
 							}
 						}
@@ -220,5 +227,39 @@ fun RadioListScreen(
 			onDismissRequest = { createDialogShown = false },
 			onRefresh = { viewModel.refreshRadios(true) }
 		)
+	}
+
+	selectedRadio?.let { selectedRadio ->
+		RadioSheet(
+			onDismissRequest = { viewModel.selectRadio(null) },
+			radio = selectedRadio,
+			onUpdateRadioRequest = { updateDialogShown = true },
+			onDeleteRadioRequest = { deleteDialogShown = true }
+		)
+
+		if (updateDialogShown) {
+			RadioUpdateDialog(
+				onDismissRequest = { updateDialogShown = false },
+				radio = selectedRadio,
+				onRefresh = {
+					updateDialogShown = false
+					viewModel.selectRadio(null)
+					viewModel.refreshRadios(true)
+				}
+			)
+		}
+
+		if (deleteDialogShown) {
+			DeletionDialog(
+				endpoint = DeletionEndpoint.RADIO,
+				id = selectedRadio.id,
+				onIdClear = { deleteDialogShown = false },
+				onRefresh = {
+					deleteDialogShown = false
+					viewModel.selectRadio(null)
+					viewModel.refreshRadios(true)
+				}
+			)
+		}
 	}
 }
