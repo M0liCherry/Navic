@@ -9,8 +9,11 @@ package paige.navic.shared
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.FlowPreview
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -40,6 +43,18 @@ abstract class MediaPlayerViewModel(
 	@Suppress("PropertyName")
 	protected val _uiState = MutableStateFlow(PlayerUiState())
 	val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
+
+	sealed interface PlayerEvent {
+		data class PlaybackFailed(val message: String) : PlayerEvent
+	}
+
+	@Suppress("PropertyName")
+	protected val _events = MutableSharedFlow<PlayerEvent>(extraBufferCapacity = 1)
+	val events: SharedFlow<PlayerEvent> = _events.asSharedFlow()
+
+	protected fun notifyEvent(event: PlayerEvent) {
+		_events.tryEmit(event)
+	}
 
 	protected fun isExplicit(song: DomainSong): Boolean {
 		return song.explicitStatus == DomainExplicitStatus.Explicit

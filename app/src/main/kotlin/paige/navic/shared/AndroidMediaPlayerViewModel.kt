@@ -15,6 +15,7 @@ import androidx.lifecycle.viewModelScope
 import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.common.Player
 import androidx.media3.common.Timeline
@@ -139,6 +140,14 @@ class AndroidMediaPlayerViewModel(
 					updatePlaybackState()
 					skipUnavailableSong()
 					checkAndAutoFillQueue()
+				}
+
+				override fun onPlayerError(error: PlaybackException) {
+					val current = _uiState.value.currentSong
+					if (current != null && YouTubeRepository.isYouTubeSong(current)) {
+						Logger.w("MediaPlayer", "YouTube stream failed for ${current.id}", error)
+						failPlayback("Couldn't play this YouTube song.")
+					}
 				}
 
 				override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -341,7 +350,7 @@ class AndroidMediaPlayerViewModel(
 			return@launchInView
 		}
 
-		val resolvedQueue = withContext(Dispatchers.IO) { state.queue.map { resolveSongForPlayback(it) } }
+		val resolvedQueue = withContext(Dispatchers.IO) { state.queue.map { resolveSongForPlayback(it) ?: it } }
 
 		val mediaItems = withContext(Dispatchers.Default) {
             resolvedQueue.map { it.toMediaItem() }
@@ -417,7 +426,7 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun addToQueueSingle(song: DomainSong, notify: Boolean) = launchInView {
-		val resolved = resolveSongForPlayback(song)
+		val resolved = resolveSongForPlayback(song) ?: return@launchInView
 		controller?.addMediaItem(withContext(Dispatchers.Default) { resolved.toMediaItem() })
 		_uiState.update { state ->
 			val newQueue = state.queue + resolved
@@ -443,7 +452,8 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun addToQueue(songs: List<DomainSong>, notify: Boolean) = launchInView {
-		val resolvedSongs = withContext(Dispatchers.IO) { songs.map { resolveSongForPlayback(it) } }
+		val resolvedSongs = withContext(Dispatchers.IO) { songs.mapNotNull { resolveSongForPlayback(it) } }
+		if (resolvedSongs.isEmpty()) return@launchInView
 		val items = withContext(Dispatchers.Default) { resolvedSongs.map { it.toMediaItem() } }
 		controller?.addMediaItems(items)
 		_uiState.update { state ->
@@ -520,7 +530,10 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun playNextSingle(song: DomainSong) = launchInView {
-		val resolved = resolveSongForPlayback(song)
+		val resolved = resolveSongForPlayback(song) ?: run {
+			notifyEvent(PlayerEvent.PlaybackFailed("Couldn't load this YouTube song."))
+			return@launchInView
+		}
 		controller?.addMediaItem(
 			_uiState.value.currentIndex + 1,
             withContext(Dispatchers.Default) { resolved.toMediaItem() }
@@ -764,7 +777,19 @@ class AndroidMediaPlayerViewModel(
 		if (ytMatchJobs.containsKey(ytSong.id)) return
 		ytMatchJobs[ytSong.id] = viewModelScope.launch {
 			try {
-				var delayMs = 30_000L
+				// Check immediately: the song may already be scanned
+				// (e.g. downloaded earlier or manual refresh).
+				if (_uiState.value.queue.any { it.id == ytSong.id }) {
+					withContext(Dispatchers.IO) {
+						searchRepository.findLibraryMatchFor(ytSong)
+					}?.let {
+						swapYouTubeWithLibrary(ytSong.id, it)
+						return@launch
+					}
+				} else {
+					return@launch
+				}
+				var delayMs = 20_000L
 				val deadline = System.currentTimeMillis() + 20 * 60 * 1000L
 				while (System.currentTimeMillis() < deadline) {
 					delay(delayMs)
@@ -787,38 +812,46 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	private fun swapYouTubeWithLibrary(ytId: String, match: DomainSong) = launchInView {
-		val player = controller
-		val queue = _uiState.value.queue
-		val indices = queue.indices.filter { queue[it].id == ytId }
-		if (indices.isEmpty()) return@launchInView
-		val currentIdx = _uiState.value.currentIndex
-		val isCurrent = currentIdx in indices &&
-			_uiState.value.currentSong?.id == ytId
+		try {
+			val queue = _uiState.value.queue
+			val indices = queue.indices.filter { queue[it].id == ytId }
+			if (indices.isEmpty()) return@launchInView
+			val player = controller
+			val currentIdx = _uiState.value.currentIndex
+			val isCurrent = currentIdx in indices &&
+				_uiState.value.currentSong?.id == ytId
 
-		if (player != null) {
-			val replacement = withContext(Dispatchers.Default) { match.toMediaItem() }
-			indices.forEach { index ->
-				if (index in 0 until player.mediaItemCount) {
-					player.replaceMediaItem(index, replacement)
+			if (player != null) {
+				val replacement = withContext(Dispatchers.Default) { match.toMediaItem() }
+				indices.forEach { index ->
+					if (index in 0 until player.mediaItemCount) {
+						player.replaceMediaItem(index, replacement)
+					}
+				}
+				if (isCurrent) {
+					// Fresh library source: restart it from the beginning and
+					// make sure it actually plays, recovering even if the old
+					// YouTube stream had errored.
+					player.seekTo(currentIdx, 0L)
+					player.prepare()
+					player.play()
 				}
 			}
-			if (isCurrent) {
-				val pos = player.currentPosition.coerceAtLeast(0L)
-				val resume = player.playWhenReady
-				player.seekTo(currentIdx, pos)
-				if (resume) player.play()
+			_uiState.update { state ->
+				state.copy(
+					queue = state.queue.map { if (it.id == ytId) match else it },
+					currentSong = if (state.currentSong?.id == ytId) match else state.currentSong
+				)
 			}
+			Logger.i("MediaPlayer", "swapped $ytId for library song ${match.id}")
+		} catch (e: Exception) {
+			if (e is kotlinx.coroutines.CancellationException) throw e
+			Logger.w("MediaPlayer", "library swap failed for $ytId", e)
 		}
-		_uiState.update { state ->
-			state.copy(
-				queue = state.queue.map { if (it.id == ytId) match else it },
-				currentSong = if (state.currentSong?.id == ytId) match else state.currentSong
-			)
-		}
-		Logger.i("MediaPlayer", "swapped $ytId for library song ${match.id}")
 	}
 
-	private suspend fun resolveSongForPlayback(song: DomainSong): DomainSong {		if (!YouTubeRepository.isYouTubeSong(song)) return song
+	private suspend fun resolveSongForPlayback(song: DomainSong): DomainSong? {
+		if (!YouTubeRepository.isYouTubeSong(song)) return song
 		if (!song.filePath.isNullOrEmpty() && song.filePath.contains("googlevideo.com")) return song
 		// NOTE: deliberately does not touch isLoading; callers that start
 		// playback set it, and ExoPlayer buffering state drives the rest.
@@ -829,8 +862,25 @@ class AndroidMediaPlayerViewModel(
 			throw e
 		} catch (e: Exception) {
 			Logger.w("MediaPlayer", "failed to resolve YouTube stream for ${song.id}", e)
-			song
+			null
 		}
+	}
+
+	private fun failPlayback(message: String) = launchInView(true) {
+		controller?.let { player ->
+			player.stop()
+			player.clearMediaItems()
+		}
+		_uiState.update { state ->
+			state.copy(
+				queue = emptyList(),
+				currentSong = null,
+				currentIndex = -1,
+				progress = 0f,
+				isLoading = false
+			)
+		}
+		notifyEvent(PlayerEvent.PlaybackFailed(message))
 	}
 
 	override fun playNow(song: DomainSong) = launchInView {
@@ -843,6 +893,10 @@ class AndroidMediaPlayerViewModel(
 		}
 		_uiState.update { it.copy(isLoading = true) }
 		val resolved = resolveSongForPlayback(song)
+		if (resolved == null) {
+			failPlayback("Couldn't load this YouTube song.")
+			return@launchInView
+		}
 		controller?.let { player ->
 			player.stop()
 			player.clearMediaItems()
@@ -866,15 +920,9 @@ class AndroidMediaPlayerViewModel(
 			return@launchInView
 		}
 		_uiState.update { it.copy(isLoading = true) }
-		val resolvedSongs = withContext(Dispatchers.IO) { songs.map { resolveSongForPlayback(it) } }
+		val resolvedSongs = withContext(Dispatchers.IO) { songs.mapNotNull { resolveSongForPlayback(it) } }
 		if (resolvedSongs.isEmpty()) {
-			controller?.let { player ->
-				player.stop()
-				player.clearMediaItems()
-			}
-			_uiState.update { state ->
-				state.copy(queue = emptyList(), currentIndex = -1, currentSong = null, isLoading = false, progress = 0f)
-			}
+			failPlayback("Couldn't load this YouTube song.")
 			return@launchInView
 		}
 		val items = withContext(Dispatchers.Default) { resolvedSongs.map { it.toMediaItem() } }
