@@ -166,4 +166,12 @@ class PreferenceManager(
 	var discordAppId by preference(ExoDiscordIntegration.DISCORD_APPLICATION_ID)
 	var proxyUrl by preference("")
 	var dangerousSslNoopEnabled by preference(false)
+
+	// YouTube fallback search (YouTube Music songs only, not videos)
+	var youtubeFallbackEnabled by preference(true)
+	var youtubeMaxResults by preference(8)
+	// Optional MeTube instance on the server (e.g. http://server:8081).
+	// When set, downloads of YouTube fallback songs are sent to MeTube
+	// so the server fetches them instead of the phone.
+	var metubeUrl by preference("")
 }

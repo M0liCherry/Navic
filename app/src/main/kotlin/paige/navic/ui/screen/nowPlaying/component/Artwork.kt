@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
@@ -60,6 +61,14 @@ fun NowPlayingArtwork(
 				contentDescription = null,
 				tint = MaterialTheme.colorScheme.onSurface.copy(alpha = .38f),
 				modifier = Modifier.size(96.dp)
+			)
+		}
+		// Buffering / stream-resolution progress for the active song
+		// (e.g. while a YouTube fallback stream is being resolved).
+		if (playerState.isLoading && playerState.currentSong?.id == song.id) {
+			CircularProgressIndicator(
+				modifier = Modifier.size(56.dp),
+				color = MaterialTheme.colorScheme.primary
 			)
 		}
 	}

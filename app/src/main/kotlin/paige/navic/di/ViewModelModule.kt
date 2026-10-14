@@ -60,6 +60,7 @@ val viewModelModule = module {
 			preferenceManager = get(),
 			snackBarManager = get(),
 			audioGainManager = get(),
+			youTubeRepository = get(),
 		)
 	}
 

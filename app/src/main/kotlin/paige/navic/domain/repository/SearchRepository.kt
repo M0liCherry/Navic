@@ -14,7 +14,9 @@ import paige.navic.data.database.dao.SongDao
 import paige.navic.data.database.mapper.toDomainModel
 import paige.navic.data.database.mapper.toEntity
 import paige.navic.domain.manager.ConnectivityManager
+import paige.navic.domain.manager.PreferenceManager
 import paige.navic.domain.manager.SessionManager
+import paige.navic.domain.model.DomainSong
 import paige.navic.util.Logger
 
 class SearchRepository(
@@ -23,6 +25,8 @@ class SearchRepository(
 	private val songDao: SongDao,
 	private val playlistDao: PlaylistDao,
 	private val sessionManager: SessionManager,
+	private val preferenceManager: PreferenceManager,
+	private val youTubeRepository: YouTubeRepository,
 	connectivityManager: ConnectivityManager
 ) {
 	val isOnline = connectivityManager.isOnline
@@ -41,10 +45,12 @@ class SearchRepository(
 				val songs = songDao.getSongsByIds(data.songs.map { it.id })
 				val localPlaylists = playlistDao.searchPlaylistsList(query)
 
-				(albums.map { it.toDomainModel() }
+				val serverResults = (albums.map { it.toDomainModel() }
 					+ artists.map { it.toDomainModel() }
 					+ songs.map { it.toDomainModel() }
 					+ localPlaylists.map { it.toDomainModel() })
+
+				serverResults + youTubeFallback(query, songs.map { it.toDomainModel() })
 			} catch (e: Exception) {
 				if (e is CancellationException) throw e
 				Logger.e(
@@ -57,6 +63,22 @@ class SearchRepository(
 		} else {
 			Logger.i("SearchRepository", "Device offline, performing local search.")
 			performLocalSearch(query)
+		}
+	}
+
+	/**
+	 * YouTube Music fallback: only kicks in when the server returned no songs
+	 * for the query, so normal library results are never polluted.
+	 */
+	private suspend fun youTubeFallback(query: String, serverSongs: List<DomainSong>): List<DomainSong> {
+		if (!preferenceManager.youtubeFallbackEnabled) return emptyList()
+		if (serverSongs.isNotEmpty()) return emptyList()
+		return try {
+			youTubeRepository.search(query)
+		} catch (e: Exception) {
+			if (e is CancellationException) throw e
+			Logger.w("SearchRepository", "YouTube fallback search failed", e)
+			emptyList()
 		}
 	}
 

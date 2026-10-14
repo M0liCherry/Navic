@@ -82,7 +82,7 @@ fun CoverArt(
 			preferenceManager.customHeadersMap().forEach { (key, value) -> add(key, value) }
 		}.build()
 		ImageRequest.Builder(coilPlatformContext)
-			.data(coverArtId?.let { sessionManager.getCoverArtUrl(it) })
+			.data(coverArtId?.let { sessionManager.resolveCoverArtUrl(it) })
 			.memoryCacheKey(coverArtId)
 			.diskCacheKey(coverArtId)
 			.diskCachePolicy(CachePolicy.ENABLED)

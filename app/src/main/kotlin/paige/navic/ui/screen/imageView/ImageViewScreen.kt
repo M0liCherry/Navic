@@ -78,7 +78,7 @@ fun ImageViewScreen(
 
 	val sessionManager = koinInject<SessionManager>()
 	val coverArtUri = remember(coverArtId) {
-		sessionManager.getCoverArtUrl(coverArtId)
+		sessionManager.resolveCoverArtUrl(coverArtId)
 	}
 
 	val coilPlatformContext = LocalCoilPlatformContext.current

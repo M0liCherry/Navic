@@ -37,7 +37,7 @@ fun rememberColorSchemeFromCoverArt(
 ): ColorScheme {
 	val sessionManager = koinInject<SessionManager>()
 	val coverArtUri = remember(coverArtId) {
-		coverArtId?.let { sessionManager.getCoverArtUrl(it) }
+		coverArtId?.let { sessionManager.resolveCoverArtUrl(it) }
 	}
 
 	val coilPlatformContext = LocalCoilPlatformContext.current

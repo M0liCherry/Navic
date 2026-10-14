@@ -51,6 +51,7 @@ import paige.navic.data.database.entity.LyricEntity
 import paige.navic.domain.model.DomainSong
 import paige.navic.domain.model.DomainSongCollection
 import paige.navic.domain.repository.LyricsRepository
+import paige.navic.domain.repository.YouTubeRepository
 import paige.navic.util.Logger
 import paige.navic.util.createHttpClientWithPreferences
 import coil3.PlatformContext as CoilPlatformContext
@@ -64,6 +65,7 @@ class DownloadManager(
 	private val lyricsRepository: LyricsRepository,
 	private val lyricDao: LyricDao,
 	private val sessionManager: SessionManager,
+	private val youTubeRepository: YouTubeRepository,
 	private val preferenceManager: PreferenceManager,
 	private val connectivityManager: ConnectivityManager,
 	private val notificationManager: NotificationManager,
@@ -399,7 +401,7 @@ class DownloadManager(
 		if (coverId == null) return
 
 		Logger.i("DownloadManager", "caching cover art for $coverId")
-		val coverArtUrl = sessionManager.getCoverArtUrl(coverId)
+		val coverArtUrl = sessionManager.resolveCoverArtUrl(coverId)
 
 		val imageRequest = ImageRequest.Builder(coilPlatformContext)
 			.data(coverArtUrl)
@@ -451,7 +453,65 @@ class DownloadManager(
 		}
 	}
 
+	private suspend fun downloadYouTubeFile(song: DomainSong) {
+		val videoId = YouTubeRepository.videoIdOf(song)
+		val watchUrl = song.filePath?.takeIf { it.contains("watch?v=") }
+			?: YouTubeRepository.watchUrl(videoId)
+
+		// Preferred path: hand the URL to the server's MeTube instance so the
+		// *server* fetches the media instead of the phone.
+		if (preferenceManager.metubeUrl.trim().isNotBlank()) {
+			downloadDao.insertDownload(DownloadEntity(song.id, DownloadStatus.DOWNLOADING, 0f))
+			try {
+				val ok = youTubeRepository.sendToMeTube(watchUrl)
+				if (ok) {
+					Logger.i("DownloadManager", "sent ${song.id} to MeTube")
+					downloadDao.insertDownload(DownloadEntity(song.id, DownloadStatus.DOWNLOADED, 1f, null))
+				} else {
+					downloadDao.insertDownload(DownloadEntity(song.id, DownloadStatus.FAILED, 0f))
+				}
+			} catch (e: Exception) {
+				if (e is CancellationException) throw e
+				Logger.e("DownloadManager", "Failed to send ${song.id} to MeTube", e)
+				downloadDao.insertDownload(DownloadEntity(song.id, DownloadStatus.FAILED, 0f))
+			}
+			return
+		}
+
+		// Fallback when no MeTube is configured: download the resolved audio
+		// stream bytes directly, with progress like normal downloads.
+		var lastProgress = 0f
+		var progressJob: Job? = null
+		val streamUrl = youTubeRepository.resolveStreamUrl(videoId)
+		val request = client.prepareRequest(streamUrl) {
+			method = HttpMethod.Get
+			onDownload { bytesSentTotal, contentLength ->
+				if (contentLength != null && contentLength > 0L) {
+					val progress = (bytesSentTotal.toDouble() / contentLength).toFloat()
+					if (progress - lastProgress >= 0.01f || progress == 1f) {
+						lastProgress = progress
+						Logger.i("DownloadManager", "downloading ${song.id} $progress")
+						progressJob?.cancel()
+						progressJob = scope.launch {
+							downloadDao.updateProgress(song.id, DownloadStatus.DOWNLOADING, progress)
+						}
+					}
+				}
+			}
+		}
+		request.execute { response ->
+			val path = storageManager.getDownloadPath(song.id, song.fileExtension ?: "m4a")
+			storageManager.saveFile(path, response.bodyAsChannel())
+			progressJob?.cancel()
+			downloadDao.insertDownload(DownloadEntity(song.id, DownloadStatus.DOWNLOADED, 1f, path))
+		}
+	}
+
 	private suspend fun downloadAudioFile(song: DomainSong) {
+		if (YouTubeRepository.isYouTubeSong(song)) {
+			downloadYouTubeFile(song)
+			return
+		}
 		var lastProgress = 0f
 		var progressJob: Job? = null
 

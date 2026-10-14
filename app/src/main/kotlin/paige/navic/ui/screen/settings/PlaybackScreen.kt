@@ -189,6 +189,25 @@ fun SettingsPlaybackScreen() {
 						)
 					}
 				}
+
+				SettingsGroup(title = { Text(stringResource(R.string.title_youtube)) }) {
+					SettingsToggleItem(
+						checked = preferenceManager.youtubeFallbackEnabled,
+						onCheckedChange = { preferenceManager.youtubeFallbackEnabled = it },
+						content = { Text(stringResource(R.string.option_youtube_fallback)) },
+						supportingContent = { Text(stringResource(R.string.subtitle_youtube_fallback)) },
+						shapes = SegmentedListItemDefaults.segmentedShapes(index = 0, count = 2)
+					)
+					SettingsInputItem(
+						value = preferenceManager.metubeUrl,
+						onValueChanged = { preferenceManager.metubeUrl = it.trim() },
+						defaultValue = "",
+						onValidate = { it.isBlank() || it.startsWith("http") },
+						content = { Text(stringResource(R.string.option_metube_url)) },
+						supportingContent = { Text(stringResource(R.string.subtitle_metube_url)) },
+						shapes = SegmentedListItemDefaults.segmentedShapes(index = 1, count = 2)
+					)
+				}
 			}
 		}
 	}

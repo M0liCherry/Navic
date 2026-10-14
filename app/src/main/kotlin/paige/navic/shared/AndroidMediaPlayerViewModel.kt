@@ -46,6 +46,7 @@ import paige.navic.domain.model.DomainSongCollection
 import paige.navic.domain.model.settings.ReplayGainMode
 import paige.navic.domain.repository.PlayerStateRepository
 import paige.navic.domain.repository.SongRepository
+import paige.navic.domain.repository.YouTubeRepository
 import paige.navic.exoplayer.ExoStateHolder
 import paige.navic.ui.core.PlayerUiState
 import paige.navic.util.Logger
@@ -65,7 +66,8 @@ class AndroidMediaPlayerViewModel(
 	private val application: Application,
 	private val albumDao: AlbumDao,
 	private val sessionManager: SessionManager,
-	private val snackBarManager: SnackBarManager
+	private val snackBarManager: SnackBarManager,
+	private val youTubeRepository: YouTubeRepository
 ) : MediaPlayerViewModel(
 	stateRepository = stateRepository,
 	songRepository = songRepository,
@@ -158,7 +160,7 @@ class AndroidMediaPlayerViewModel(
 							putExtra(
 								"artUrl",
 								currentSong?.coverArtId?.let {
-									sessionManager.getCoverArtUrl(it)
+									sessionManager.resolveCoverArtUrl(it)
 								})
 						}
 
@@ -336,8 +338,10 @@ class AndroidMediaPlayerViewModel(
 			return@launchInView
 		}
 
+		val resolvedQueue = withContext(Dispatchers.IO) { state.queue.map { resolveSongForPlayback(it) } }
+
 		val mediaItems = withContext(Dispatchers.Default) {
-            state.queue.map { it.toMediaItem() }
+            resolvedQueue.map { it.toMediaItem() }
         }
 
 		player.apply {
@@ -350,7 +354,7 @@ class AndroidMediaPlayerViewModel(
 
 		val index = if (state.currentIndex in mediaItems.indices) state.currentIndex else 0
 
-		val songDurationMs = state.queue.getOrNull(index)?.duration?.inWholeMilliseconds ?: 0L
+		val songDurationMs = resolvedQueue.getOrNull(index)?.duration?.inWholeMilliseconds ?: 0L
 
 		val position = if (songDurationMs > 0) {
 			(state.progress * songDurationMs).toLong()
@@ -410,13 +414,14 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun addToQueueSingle(song: DomainSong, notify: Boolean) = launchInView {
-		controller?.addMediaItem(song.toMediaItem())
+		val resolved = resolveSongForPlayback(song)
+		controller?.addMediaItem(withContext(Dispatchers.Default) { resolved.toMediaItem() })
 		_uiState.update { state ->
-			val newQueue = state.queue + song
+			val newQueue = state.queue + resolved
 			state.copy(
 				queue = newQueue,
 				currentIndex = if (state.currentIndex == -1) 0 else state.currentIndex,
-				currentSong = if (state.currentIndex == -1) song else state.currentSong
+				currentSong = if (state.currentIndex == -1) resolved else state.currentSong
 			)
 		}
 		if (notify) snackBarManager.notifyAddedToQueue()
@@ -435,14 +440,15 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun addToQueue(songs: List<DomainSong>, notify: Boolean) = launchInView {
-		val items = songs.map { it.toMediaItem() }
+		val resolvedSongs = withContext(Dispatchers.IO) { songs.map { resolveSongForPlayback(it) } }
+		val items = withContext(Dispatchers.Default) { resolvedSongs.map { it.toMediaItem() } }
 		controller?.addMediaItems(items)
 		_uiState.update { state ->
-			val newQueue = state.queue + songs
+			val newQueue = state.queue + resolvedSongs
 			state.copy(
 				queue = newQueue,
 				currentIndex = if (state.currentIndex == -1) 0 else state.currentIndex,
-				currentSong = if (state.currentIndex == -1) songs.firstOrNull() else state.currentSong
+				currentSong = if (state.currentIndex == -1) resolvedSongs.firstOrNull() else state.currentSong
 			)
 		}
 		if (notify) snackBarManager.notifyAddedToQueue()
@@ -511,20 +517,21 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun playNextSingle(song: DomainSong) = launchInView {
+		val resolved = resolveSongForPlayback(song)
 		controller?.addMediaItem(
 			_uiState.value.currentIndex + 1,
-            withContext(Dispatchers.Default) { song.toMediaItem() }
+            withContext(Dispatchers.Default) { resolved.toMediaItem() }
 		)
 		_uiState.update { state ->
 			val newQueue =
 				if (state.queue.isEmpty())
-					state.queue + song
+					state.queue + resolved
 				else
-					state.queue.slice(0..state.currentIndex) + song + state.queue.slice(state.currentIndex + 1..<state.queue.size)
+					state.queue.slice(0..state.currentIndex) + resolved + state.queue.slice(state.currentIndex + 1..<state.queue.size)
 			state.copy(
 				queue = newQueue,
 				currentIndex = if (state.currentIndex == -1) 0 else state.currentIndex,
-				currentSong = if (state.currentIndex == -1) song else state.currentSong
+				currentSong = if (state.currentIndex == -1) resolved else state.currentSong
 			)
 		}
 		snackBarManager.notifyPlayNext()
@@ -719,6 +726,85 @@ class AndroidMediaPlayerViewModel(
 		_uiState.update { it.copy(playbackSpeed = value) }
 	}
 
+	private suspend fun resolveSongForPlayback(song: DomainSong): DomainSong {
+		if (!YouTubeRepository.isYouTubeSong(song)) return song
+		if (!song.filePath.isNullOrEmpty() && song.filePath.contains("googlevideo.com")) return song
+		// NOTE: deliberately does not touch isLoading; callers that start
+		// playback set it, and ExoPlayer buffering state drives the rest.
+		// Setting it here would leave queue-only operations stuck on loading.
+		return try {
+			withContext(Dispatchers.IO) { youTubeRepository.resolveSong(song) }
+		} catch (e: kotlinx.coroutines.CancellationException) {
+			throw e
+		} catch (e: Exception) {
+			Logger.w("MediaPlayer", "failed to resolve YouTube stream for ${song.id}", e)
+			song
+		}
+	}
+
+	override fun playNow(song: DomainSong) = launchInView {
+		if (!YouTubeRepository.isYouTubeSong(song)) {
+			clearQueue()
+			addToQueueSingle(song, notify = false)
+			playAt(0)
+			checkAndAutoFillQueue()
+			return@launchInView
+		}
+		_uiState.update { it.copy(isLoading = true) }
+		val resolved = resolveSongForPlayback(song)
+		controller?.let { player ->
+			player.stop()
+			player.clearMediaItems()
+			player.setMediaItem(withContext(Dispatchers.Default) { resolved.toMediaItem() })
+			player.prepare()
+			player.play()
+		}
+		_uiState.update { state ->
+			state.copy(queue = listOf(resolved), currentIndex = 0, currentSong = resolved, isLoading = true)
+		}
+		checkAndAutoFillQueue()
+	}
+
+	override fun playNow(songs: List<DomainSong>, startIndex: Int) = launchInView {
+		if (songs.none { YouTubeRepository.isYouTubeSong(it) }) {
+			clearQueue()
+			addToQueue(songs, notify = false)
+			playAt(startIndex)
+			checkAndAutoFillQueue()
+			return@launchInView
+		}
+		_uiState.update { it.copy(isLoading = true) }
+		val resolvedSongs = withContext(Dispatchers.IO) { songs.map { resolveSongForPlayback(it) } }
+		if (resolvedSongs.isEmpty()) {
+			controller?.let { player ->
+				player.stop()
+				player.clearMediaItems()
+			}
+			_uiState.update { state ->
+				state.copy(queue = emptyList(), currentIndex = -1, currentSong = null, isLoading = false, progress = 0f)
+			}
+			return@launchInView
+		}
+		val items = withContext(Dispatchers.Default) { resolvedSongs.map { it.toMediaItem() } }
+		val safeIndex = startIndex.coerceIn(0, (resolvedSongs.size - 1).coerceAtLeast(0))
+		controller?.let { player ->
+			player.stop()
+			player.clearMediaItems()
+			player.setMediaItems(items, safeIndex, 0L)
+			player.prepare()
+			player.play()
+		}
+		_uiState.update { state ->
+			state.copy(
+				queue = resolvedSongs,
+				currentIndex = safeIndex,
+				currentSong = resolvedSongs.getOrNull(safeIndex),
+				isLoading = true
+			)
+		}
+		checkAndAutoFillQueue()
+	}
+
 	private fun DomainSong.toMediaItem(): MediaItem {
 		val displayArtist = artists.joinToString { it.name }.ifBlank { artistName }
 		val albumArtistName = albumArtists.joinToString { it.name }.ifBlank { artistName }
@@ -733,13 +819,17 @@ class AndroidMediaPlayerViewModel(
 			.setMediaType(MediaMetadata.MEDIA_TYPE_MUSIC)
 
 		metadataBuilder.setArtworkUri(
-			coverArtId?.let { sessionManager.getCoverArtUrl(it).toUri() }
+			coverArtId?.let { sessionManager.resolveCoverArtUrl(it).toUri() }
 		)
 
 		val metadata = metadataBuilder.build()
 
 		val uri = when {
 			id.startsWith("radio_") && !filePath.isNullOrEmpty() -> {
+				filePath.toUri()
+			}
+
+			YouTubeRepository.isYouTubeSongId(id) && !filePath.isNullOrEmpty() -> {
 				filePath.toUri()
 			}
 
