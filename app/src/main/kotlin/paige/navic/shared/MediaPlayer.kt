@@ -73,21 +73,21 @@ abstract class MediaPlayerViewModel(
 	abstract fun shufflePlay(collection: DomainSongCollection)
 	abstract fun setPlaybackSpeed(value: Float)
 
-	fun playNow(song: DomainSong) {
+	open fun playNow(song: DomainSong) {
 		clearQueue()
 		addToQueueSingle(song, notify = false)
 		playAt(0)
 		checkAndAutoFillQueue()
 	}
 
-	fun playNow(collection: DomainSongCollection, startIndex: Int = 0) {
+	open fun playNow(collection: DomainSongCollection, startIndex: Int = 0) {
 		clearQueue()
 		addToQueue(collection, notify = false)
 		playAt(startIndex)
 		checkAndAutoFillQueue()
 	}
 
-	fun playNow(songs: List<DomainSong>, startIndex: Int = 0) {
+	open fun playNow(songs: List<DomainSong>, startIndex: Int = 0) {
 		clearQueue()
 		addToQueue(songs, notify = false)
 		playAt(startIndex)

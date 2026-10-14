@@ -24,6 +24,7 @@ import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.text.input.clearText
 import androidx.compose.foundation.text.input.insert
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -49,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.compose.dropUnlessResumed
 import androidx.lifecycle.viewmodel.compose.LocalViewModelStoreOwner
+import kotlinx.collections.immutable.persistentListOf
 import org.koin.compose.koinInject
 import org.koin.compose.viewmodel.koinViewModel
 import org.koin.core.parameter.parametersOf
@@ -57,6 +59,7 @@ import paige.navic.data.database.entity.DownloadStatus
 import paige.navic.di.LocalBottomBarScrollManager
 import paige.navic.di.LocalNavStack
 import paige.navic.di.LocalSizeClass
+import paige.navic.domain.manager.DownloadManager
 import paige.navic.domain.manager.PreferenceManager
 import paige.navic.domain.model.DomainAlbum
 import paige.navic.domain.model.DomainAlbumListType
@@ -144,9 +147,13 @@ fun SearchScreen(
 	val searchHistory by viewModel.searchHistory.collectAsState(initial = emptyList())
 	val isOnline by viewModel.isOnline.collectAsState()
 	val downloadedSongs by viewModel.downloadedSongs.collectAsState()
+	val downloadManager = koinInject<DownloadManager>()
+	val allDownloads by downloadManager.allDownloads.collectAsState(persistentListOf())
+	val ytDownloadStatuses = remember(allDownloads) { allDownloads.associate { it.songId to it.status } }
 
 	val player = koinInject<MediaPlayerViewModel>()
 	val backStack = LocalNavStack.current
+	val playerState by player.uiState.collectAsState()
 
 	var selectedCategory by remember { mutableStateOf(SearchCategory.ALL) }
 	var songToQueue by remember { mutableStateOf<DomainSong?>(null) }
@@ -232,7 +239,7 @@ fun SearchScreen(
 							if (songs.isNotEmpty()) {
 								item(span = { GridItemSpan(maxLineSpan) }) {
 									Text(
-										stringResource(R.string.title_songs),
+										if (songs.any { it.id.startsWith("yt-") } && songs.none { !it.id.startsWith("yt-") }) stringResource(R.string.title_youtube) else stringResource(R.string.title_songs),
 										style = MaterialTheme.typography.headlineSmall,
 										modifier = Modifier.padding(
 											horizontal = 16.dp,
@@ -245,6 +252,7 @@ fun SearchScreen(
 									span = { GridItemSpan(maxLineSpan) }
 								) { index ->
 									val song = songs[index]
+									val isYt = song.id.startsWith("yt-")
 									val isDownloaded = downloadedSongs.containsKey(song.id)
 
 									val isExplicit = song.explicitStatus == DomainExplicitStatus.Explicit
@@ -347,6 +355,9 @@ fun SearchScreen(
 														modifier = Modifier.size(20.dp)
 													)
 												}
+												if (playerState.isLoading && playerState.currentSong?.id == song.id) {
+													CircularProgressIndicator(modifier = Modifier.size(20.dp))
+												}
 											}
 										)
 										if (selectedSong == song) {
@@ -367,14 +378,17 @@ fun SearchScreen(
 														player.addToQueueSingle(song)
 													}
 												},
-												downloadStatus = if (downloadedSongs.containsKey(
-														song.id
-													)
-												) DownloadStatus.DOWNLOADED else null,
-												onTrackInfo = dropUnlessResumed {
+												downloadStatus = if (isYt) ytDownloadStatuses[song.id] else if (downloadedSongs.containsKey(
+															song.id
+														)
+														) DownloadStatus.DOWNLOADED else null,
+												onDownload = if (isYt) ({ downloadManager.downloadSong(song) }) else null,
+												onCancelDownload = if (isYt) ({ downloadManager.cancelDownload(song.id) }) else null,
+												onDeleteDownload = if (isYt) ({ downloadManager.deleteDownload(song.id) }) else null,
+												onTrackInfo = if (isYt) null else dropUnlessResumed {
 													backStack.add(Screen.SongDetailScreen(song.id, song.coverArtId))
 												},
-												onViewAlbum = song.albumId?.let { albumId ->
+												onViewAlbum = if (isYt) null else song.albumId?.let { albumId ->
 													dropUnlessResumed {
 														backStack.add(
 															Screen.CollectionDetail(
@@ -384,10 +398,10 @@ fun SearchScreen(
 														)
 													}
 												},
-												starred = selectedSongIsStarred,
-												onSetStarred = { viewModel.starSelectedSong(it) },
-												rating = selectedSongRating,
-												onSetRating = { viewModel.rateSelectedSong(it) }
+												starred = if (isYt) null else selectedSongIsStarred,
+												onSetStarred = if (isYt) null else ({ viewModel.starSelectedSong(it) }),
+												rating = if (isYt) null else selectedSongRating,
+												onSetRating = if (isYt) null else ({ viewModel.rateSelectedSong(it) })
 											)
 										}
 									}

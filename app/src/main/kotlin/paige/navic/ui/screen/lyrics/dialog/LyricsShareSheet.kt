@@ -114,7 +114,7 @@ fun LyricsShareSheet(
 	val sessionManager = koinInject<SessionManager>()
 	val model = remember(song.coverArtId) {
 		ImageRequest.Builder(coilPlatformContext)
-			.data(song.coverArtId?.let { sessionManager.getCoverArtUrl(it) })
+			.data(song.coverArtId?.let { sessionManager.resolveCoverArtUrl(it) })
 			.diskCacheKey(song.coverArtId)
 			.diskCachePolicy(CachePolicy.ENABLED)
 			.build()

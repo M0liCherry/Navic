@@ -20,6 +20,7 @@ import paige.navic.domain.repository.RadioRepository
 import paige.navic.domain.repository.SearchRepository
 import paige.navic.domain.repository.ShareRepository
 import paige.navic.domain.repository.SongRepository
+import paige.navic.domain.repository.YouTubeRepository
 
 val repositoryModule = module {
 	singleOf(::AlbumRepository)
@@ -34,4 +35,5 @@ val repositoryModule = module {
 	singleOf(::SearchRepository)
 	singleOf(::ShareRepository)
 	singleOf(::SongRepository)
+	singleOf(::YouTubeRepository)
 }

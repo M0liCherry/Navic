@@ -109,7 +109,7 @@ fun MiniPlayer(
 	val sessionManager = koinInject<SessionManager>()
 	val model = remember(song?.coverArtId) {
 		ImageRequest.Builder(coilPlatformContext)
-			.data(song?.coverArtId?.let { sessionManager.getCoverArtUrl(it) })
+			.data(song?.coverArtId?.let { sessionManager.resolveCoverArtUrl(it) })
 			.memoryCacheKey(song?.coverArtId)
 			.diskCacheKey(song?.coverArtId)
 			.diskCachePolicy(CachePolicy.ENABLED)

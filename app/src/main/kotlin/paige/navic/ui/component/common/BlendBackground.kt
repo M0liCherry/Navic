@@ -63,7 +63,7 @@ fun BlendBackground(
 	val model = remember(coverArtId) {
 		ImageRequest.Builder(coilPlatformContext)
 			.disableHardwareIfCucked()
-			.data(coverArtId?.let { sessionManager.getCoverArtUrl(it) })
+			.data(coverArtId?.let { sessionManager.resolveCoverArtUrl(it) })
 			.memoryCacheKey(coverArtId?.let { "${it}_static" })
 			.diskCacheKey(coverArtId)
 			.diskCachePolicy(CachePolicy.ENABLED)

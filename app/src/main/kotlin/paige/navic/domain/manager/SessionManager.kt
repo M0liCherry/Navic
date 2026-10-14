@@ -129,6 +129,19 @@ class SessionManager(
 		size = "${preferenceManager.coverArtQuality.value}"
 	)
 
+	/**
+	 * Resolve a [DomainSong.coverArtId] to a loadable URL.
+	 *
+	 * Subsonic cover art ids go through the Subsonic API, while YouTube
+	 * fallback songs store a direct http(s) thumbnail URL in [coverArtId].
+	 */
+	fun resolveCoverArtUrl(coverArtId: String): String {
+		if (coverArtId.startsWith("http://") || coverArtId.startsWith("https://")) {
+			return coverArtId
+		}
+		return getCoverArtUrl(coverArtId)
+	}
+
 
 	private suspend fun fetchCurrentUser(
 		username: String = settings.getString("username", ""),
