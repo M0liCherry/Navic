@@ -726,8 +726,29 @@ class AndroidMediaPlayerViewModel(
 		_uiState.update { it.copy(playbackSpeed = value) }
 	}
 
-	private suspend fun resolveSongForPlayback(song: DomainSong): DomainSong {
-		if (!YouTubeRepository.isYouTubeSong(song)) return song
+	/**
+	 * Best-effort background send of a played YouTube song to the server's
+	 * MeTube instance, so tapping a fallback entry both streams instantly
+	 * and fetches the file server-side. Never blocks or breaks playback.
+	 */
+	private fun sendYouTubeToMeTube(song: DomainSong) = launchInView {
+		if (!YouTubeRepository.isYouTubeSong(song)) return@launchInView
+		if (preferenceManager.metubeUrl.trim().isBlank()) return@launchInView
+		try {
+			val watchUrl = song.filePath?.takeIf { it.contains("watch?v=") }
+				?: YouTubeRepository.watchUrl(YouTubeRepository.videoIdOf(song))
+			if (youTubeRepository.sendToMeTube(watchUrl)) {
+				Logger.i("MediaPlayer", "sent ${song.id} to MeTube")
+			} else {
+				Logger.w("MediaPlayer", "MeTube send failed for ${song.id}")
+			}
+		} catch (e: Exception) {
+			if (e is kotlinx.coroutines.CancellationException) throw e
+			Logger.w("MediaPlayer", "MeTube send failed for ${song.id}", e)
+		}
+	}
+
+	private suspend fun resolveSongForPlayback(song: DomainSong): DomainSong {		if (!YouTubeRepository.isYouTubeSong(song)) return song
 		if (!song.filePath.isNullOrEmpty() && song.filePath.contains("googlevideo.com")) return song
 		// NOTE: deliberately does not touch isLoading; callers that start
 		// playback set it, and ExoPlayer buffering state drives the rest.
@@ -763,6 +784,7 @@ class AndroidMediaPlayerViewModel(
 			state.copy(queue = listOf(resolved), currentIndex = 0, currentSong = resolved, isLoading = true)
 		}
 		checkAndAutoFillQueue()
+		sendYouTubeToMeTube(resolved)
 	}
 
 	override fun playNow(songs: List<DomainSong>, startIndex: Int) = launchInView {
@@ -803,6 +825,7 @@ class AndroidMediaPlayerViewModel(
 			)
 		}
 		checkAndAutoFillQueue()
+		resolvedSongs.getOrNull(safeIndex)?.let { sendYouTubeToMeTube(it) }
 	}
 
 	private fun DomainSong.toMediaItem(): MediaItem {

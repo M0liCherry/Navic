@@ -8,6 +8,7 @@ package paige.navic.domain.repository
 
 import io.ktor.client.plugins.HttpTimeout
 import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
+import io.ktor.client.request.get
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
@@ -26,11 +27,14 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import paige.navic.domain.manager.PreferenceManager
+import paige.navic.domain.model.DomainAlbum
+import paige.navic.domain.model.DomainArtist
 import paige.navic.domain.model.DomainExplicitStatus
 import paige.navic.domain.model.DomainSong
 import paige.navic.domain.model.DomainSongArtist
 import paige.navic.util.Logger
 import paige.navic.util.createHttpClientWithPreferences
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -57,8 +61,10 @@ class YouTubeRepository(
 		private const val ANDROID_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
 		private const val SEARCH_URL = "https://music.youtube.com/youtubei/v1/search"
 		private const val PLAYER_URL = "https://music.youtube.com/youtubei/v1/player"
-		// Innertube filter param: songs only
+		// Innertube filter params: songs / artists / albums only (never videos)
 		private const val SONGS_FILTER_PARAM = "EgWKAQIIAWoMEA4QChADEAQQCRAF"
+		private const val ARTISTS_FILTER_PARAM = "EgWKAQIgAWoMEA4QChADEAQQCRAF"
+		private const val ALBUMS_FILTER_PARAM = "EgWKAQIYAWoMEA4QChADEAQQCRAF"
 		private const val CLIENT_NAME = "WEB_REMIX"
 		private const val CLIENT_VERSION = "1.20250101.00.00"
 		private const val ANDROID_CLIENT_VERSION = "20.10.38"
@@ -93,32 +99,57 @@ class YouTubeRepository(
 
 	suspend fun search(query: String): List<DomainSong> {
 		if (query.isBlank()) return emptyList()
-		val limit = maxResults()
 		return try {
-			// Build request body manually to avoid escaping issues; query is JSON-escaped below.
-			val requestJson = """{"context":{"client":{"clientName":"$CLIENT_NAME","clientVersion":"$CLIENT_VERSION","hl":"en","gl":"US"}},"query":${json.encodeToString(query)},"params":"$SONGS_FILTER_PARAM"}"""
-
-			val response = client.post("$SEARCH_URL?prettyPrint=false&key=$YTM_KEY") {
-				contentType(ContentType.Application.Json)
-				header("Origin", "https://music.youtube.com")
-				header("Referer", "https://music.youtube.com/")
-				header("Accept-Language", "en-US,en;q=0.9")
-				header(
-					"User-Agent",
-					"Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
-				)
-				setBody(requestJson)
-			}
-			if (!response.status.isSuccess()) {
-				Logger.w("YouTubeRepository", "search failed: ${response.status}")
-				return emptyList()
-			}
-			val root = json.parseToJsonElement(response.bodyAsText()).jsonObject
-			parseSongItems(root).take(limit)
+			val root = innertubeSearch(query, SONGS_FILTER_PARAM) ?: return emptyList()
+			parseSongItems(root).take(maxResults())
 		} catch (e: Exception) {
 			Logger.w("YouTubeRepository", "search failed for '$query'", e)
 			emptyList()
 		}
+	}
+
+	suspend fun searchArtists(query: String): List<DomainArtist> {
+		if (query.isBlank()) return emptyList()
+		return try {
+			val root = innertubeSearch(query, ARTISTS_FILTER_PARAM) ?: return emptyList()
+			parseArtistItems(root).take(maxResults())
+		} catch (e: Exception) {
+			Logger.w("YouTubeRepository", "artist search failed for '$query'", e)
+			emptyList()
+		}
+	}
+
+	suspend fun searchAlbums(query: String): List<DomainAlbum> {
+		if (query.isBlank()) return emptyList()
+		return try {
+			val root = innertubeSearch(query, ALBUMS_FILTER_PARAM) ?: return emptyList()
+			parseAlbumItems(root).take(maxResults())
+		} catch (e: Exception) {
+			Logger.w("YouTubeRepository", "album search failed for '$query'", e)
+			emptyList()
+		}
+	}
+
+	private suspend fun innertubeSearch(query: String, params: String): JsonObject? {
+		// Build request body manually to avoid escaping issues; query is JSON-escaped below.
+		val requestJson = """{"context":{"client":{"clientName":"$CLIENT_NAME","clientVersion":"$CLIENT_VERSION","hl":"en","gl":"US"}},"query":${json.encodeToString(query)},"params":"$params"}"""
+
+		val response = client.post("$SEARCH_URL?prettyPrint=false&key=$YTM_KEY") {
+			contentType(ContentType.Application.Json)
+			header("Origin", "https://music.youtube.com")
+			header("Referer", "https://music.youtube.com/")
+			header("Accept-Language", "en-US,en;q=0.9")
+			header(
+				"User-Agent",
+				"Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
+			)
+			setBody(requestJson)
+		}
+		if (!response.status.isSuccess()) {
+			Logger.w("YouTubeRepository", "search failed: ${response.status}")
+			return null
+		}
+		return json.parseToJsonElement(response.bodyAsText()).jsonObject
 	}
 
 	suspend fun resolveStreamUrl(videoId: String): String {
@@ -184,7 +215,7 @@ class YouTubeRepository(
 		return try {
 			val response = client.post("$base/add") {
 				contentType(ContentType.Application.Json)
-				setBody("""{"url":${json.encodeToString(watchUrl)},"quality":"best","format":"mp3"}""")
+				setBody("""{"url":${json.encodeToString(watchUrl)},"quality":"best","format":"mp3","download_type":"audio","codec":"auto","audio_tags":"with_cover"}""")
 			}
 			if (!response.status.isSuccess()) {
 				Logger.w("YouTubeRepository", "metube rejected: ${response.status}")
@@ -197,6 +228,34 @@ class YouTubeRepository(
 		}
 	}
 
+	data class MeTubeStatus(val ok: Boolean, val detail: String)
+
+	/**
+	 * Check the configured MeTube instance by calling its `GET /version`
+	 * endpoint. Returns converter/engine versions and round-trip latency.
+	 */
+	suspend fun testMeTube(): MeTubeStatus {
+		val base = preferenceManager.metubeUrl.trim().trimEnd('/')
+		if (base.isBlank()) return MeTubeStatus(false, "No MeTube URL configured")
+		return try {
+			val start = Clock.System.now()
+			val response = client.get("$base/version") {
+				header("Accept-Language", "en-US,en;q=0.9")
+			}
+			if (!response.status.isSuccess()) {
+				return MeTubeStatus(false, "HTTP ${response.status.value}")
+			}
+			val body = json.parseToJsonElement(response.bodyAsText()) as? JsonObject
+			val version = body?.str("version") ?: "?"
+			val ytdlp = body?.str("yt-dlp") ?: "?"
+			val ms = (Clock.System.now() - start).inWholeMilliseconds
+			MeTubeStatus(true, "MeTube $version · yt-dlp $ytdlp · ${ms}ms")
+		} catch (e: Exception) {
+			Logger.w("YouTubeRepository", "metube test failed", e)
+			MeTubeStatus(false, e.message ?: e.toString())
+		}
+	}
+
 	// --- parsing ---
 
 	private fun kotlinx.serialization.json.JsonObject.obj(key: String): JsonObject? = get(key) as? JsonObject
@@ -204,6 +263,97 @@ class YouTubeRepository(
 		get(key) as? kotlinx.serialization.json.JsonArray
 	private fun kotlinx.serialization.json.JsonObject.str(key: String): String? =
 		(get(key) as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+
+	private fun listItemTitle(r: JsonObject, column: Int): String {
+		val runs = (flexColumns(r).getOrNull(column) as? JsonObject)
+			?.obj("musicResponsiveListItemFlexColumnRenderer")
+			?.obj("text")
+			?.arr("runs") ?: return ""
+		return runs.mapNotNull { (it as? JsonObject)?.str("text") }.joinToString("")
+	}
+
+	private fun flexColumns(r: JsonObject): kotlinx.serialization.json.JsonArray =
+		r.arr("flexColumns") ?: kotlinx.serialization.json.JsonArray(emptyList())
+
+	private fun listItemThumbnail(r: JsonObject): String? {
+		val thumbnails = r.obj("thumbnail")
+			?.obj("musicThumbnailRenderer")
+			?.obj("thumbnail")
+			?.arr("thumbnails")
+		return thumbnails?.lastOrNull().let { it as? JsonObject }?.str("url")
+	}
+
+	private fun parseArtistItems(root: JsonObject): List<DomainArtist> {
+		val renderers = mutableListOf<JsonObject>()
+		collectRenderers(root, "musicResponsiveListItemRenderer", renderers)
+		val artists = mutableListOf<DomainArtist>()
+		val seen = mutableSetOf<String>()
+		for (r in renderers) {
+			try {
+				val browseId = r.obj("navigationEndpoint")?.obj("browseEndpoint")?.str("browseId")
+					?: continue
+				if (!seen.add(browseId)) continue
+				val name = listItemTitle(r, 0)
+				if (name.isBlank()) continue
+				val thumb = listItemThumbnail(r)
+				artists += DomainArtist(
+					id = "$PREFIX-artist-$browseId",
+					name = name,
+					coverArtId = thumb,
+					artistImageUrl = thumb
+				)
+			} catch (_: Exception) {
+				continue
+			}
+		}
+		return artists
+	}
+
+	private fun parseAlbumItems(root: JsonObject): List<DomainAlbum> {
+		val renderers = mutableListOf<JsonObject>()
+		collectRenderers(root, "musicResponsiveListItemRenderer", renderers)
+		val albums = mutableListOf<DomainAlbum>()
+		val seen = mutableSetOf<String>()
+		for (r in renderers) {
+			try {
+				val browseId = r.obj("navigationEndpoint")?.obj("browseEndpoint")?.str("browseId")
+					?: continue
+				if (!seen.add(browseId)) continue
+				val title = listItemTitle(r, 0)
+				if (title.isBlank()) continue
+				val second = listItemTitle(r, 1)
+				val parts = second.split("•", "·").map { it.trim() }.filter { it.isNotEmpty() }
+				val kind = parts.getOrNull(0)?.takeIf { it.equals("album", true) || it.equals("single", true) || it.equals("ep", true) }
+				val artist = parts.getOrNull(1)
+				val year = parts.mapNotNull { it.toIntOrNull() }.firstOrNull { it in 1900..2100 }
+				val thumb = listItemThumbnail(r)
+				val artistName = artist?.takeIf { it.isNotBlank() } ?: "Unknown artist"
+				albums += DomainAlbum(
+					id = "$PREFIX-album-$browseId",
+					name = title,
+					artistName = artistName,
+					artistId = "$PREFIX-artist-${artistName.hashCode()}",
+					year = year,
+					coverArtId = thumb,
+					genre = null,
+					genres = emptyList(),
+					songCount = 0,
+					duration = null,
+					createdAt = Clock.System.now(),
+					starredAt = null,
+					lastPlayedAt = null,
+					userRating = null,
+					version = kind,
+					musicBrainzId = null,
+					songs = emptyList(),
+					isExternal = true
+				)
+			} catch (_: Exception) {
+				continue
+			}
+		}
+		return albums
+	}
 
 	private fun parseSongItems(root: JsonObject): List<DomainSong> {
 		val renderers = mutableListOf<JsonObject>()

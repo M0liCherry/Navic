@@ -16,6 +16,8 @@ import paige.navic.data.database.mapper.toEntity
 import paige.navic.domain.manager.ConnectivityManager
 import paige.navic.domain.manager.PreferenceManager
 import paige.navic.domain.manager.SessionManager
+import paige.navic.domain.model.DomainAlbum
+import paige.navic.domain.model.DomainArtist
 import paige.navic.domain.model.DomainSong
 import paige.navic.util.Logger
 
@@ -50,7 +52,10 @@ class SearchRepository(
 					+ songs.map { it.toDomainModel() }
 					+ localPlaylists.map { it.toDomainModel() })
 
-				serverResults + youTubeFallback(query, songs.map { it.toDomainModel() })
+				serverResults +
+					youTubeSongFallback(query, songs.map { it.toDomainModel() }) +
+					youTubeArtistFallback(query, artists.map { it.toDomainModel() }) +
+					youTubeAlbumFallback(query, albums.map { it.toDomainModel() })
 			} catch (e: Exception) {
 				if (e is CancellationException) throw e
 				Logger.e(
@@ -70,7 +75,7 @@ class SearchRepository(
 	 * YouTube Music fallback: only kicks in when the server returned no songs
 	 * for the query, so normal library results are never polluted.
 	 */
-	private suspend fun youTubeFallback(query: String, serverSongs: List<DomainSong>): List<DomainSong> {
+	private suspend fun youTubeSongFallback(query: String, serverSongs: List<DomainSong>): List<DomainSong> {
 		if (!preferenceManager.youtubeFallbackEnabled) return emptyList()
 		if (serverSongs.isNotEmpty()) return emptyList()
 		return try {
@@ -78,6 +83,30 @@ class SearchRepository(
 		} catch (e: Exception) {
 			if (e is CancellationException) throw e
 			Logger.w("SearchRepository", "YouTube fallback search failed", e)
+			emptyList()
+		}
+	}
+
+	private suspend fun youTubeArtistFallback(query: String, serverArtists: List<DomainArtist>): List<DomainArtist> {
+		if (!preferenceManager.youtubeFallbackEnabled) return emptyList()
+		if (serverArtists.isNotEmpty()) return emptyList()
+		return try {
+			youTubeRepository.searchArtists(query)
+		} catch (e: Exception) {
+			if (e is CancellationException) throw e
+			Logger.w("SearchRepository", "YouTube artist fallback search failed", e)
+			emptyList()
+		}
+	}
+
+	private suspend fun youTubeAlbumFallback(query: String, serverAlbums: List<DomainAlbum>): List<DomainAlbum> {
+		if (!preferenceManager.youtubeFallbackEnabled) return emptyList()
+		if (serverAlbums.isNotEmpty()) return emptyList()
+		return try {
+			youTubeRepository.searchAlbums(query)
+		} catch (e: Exception) {
+			if (e is CancellationException) throw e
+			Logger.w("SearchRepository", "YouTube album fallback search failed", e)
 			emptyList()
 		}
 	}

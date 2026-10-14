@@ -499,6 +499,9 @@
 	<string name="subtitle_youtube_fallback">When your server has no matching songs, show matching YouTube Music songs as regular entries. Tapping one plays its audio.</string>
 	<string name="option_metube_url">MeTube URL</string>
 	<string name="subtitle_metube_url">Optional MeTube instance on your server (e.g. http://server:8081). YouTube downloads are sent to MeTube so the server fetches them.</string>
+	<string name="action_test_metube">Test MeTube connection</string>
+	<string name="info_metube_testing">Testing…</string>
+	<string name="info_metube_not_tested">Check whether the MeTube URL is reachable.</string>
 	<string name="info_not_available_offline">Not available offline</string>
 	<string name="info_no_queue">Nothing queued</string>
 	<string name="info_no_genres">No genres</string>

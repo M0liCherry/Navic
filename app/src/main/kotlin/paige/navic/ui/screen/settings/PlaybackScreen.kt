@@ -18,17 +18,24 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.windowsizeclass.WindowWidthSizeClass
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.dropUnlessResumed
 import kotlinx.collections.immutable.toImmutableList
+import kotlinx.coroutines.launch
 import org.koin.compose.koinInject
 import paige.navic.R
 import paige.navic.di.LocalNavStack
 import paige.navic.di.LocalSizeClass
 import paige.navic.discord.ExoDiscordIntegration
 import paige.navic.domain.manager.PreferenceManager
+import paige.navic.domain.repository.YouTubeRepository
 import paige.navic.domain.model.settings.ExplicitContentPlayback
 import paige.navic.ui.component.common.SegmentedListItemDefaults
 import paige.navic.ui.component.layout.NestedTopBar
@@ -191,12 +198,16 @@ fun SettingsPlaybackScreen() {
 				}
 
 				SettingsGroup(title = { Text(stringResource(R.string.title_youtube)) }) {
+					val youTubeRepository = koinInject<YouTubeRepository>()
+					val scope = rememberCoroutineScope()
+					var metubeTesting by remember { mutableStateOf(false) }
+					var metubeTestResult by remember { mutableStateOf<String?>(null) }
 					SettingsToggleItem(
 						checked = preferenceManager.youtubeFallbackEnabled,
 						onCheckedChange = { preferenceManager.youtubeFallbackEnabled = it },
 						content = { Text(stringResource(R.string.option_youtube_fallback)) },
 						supportingContent = { Text(stringResource(R.string.subtitle_youtube_fallback)) },
-						shapes = SegmentedListItemDefaults.segmentedShapes(index = 0, count = 2)
+						shapes = SegmentedListItemDefaults.segmentedShapes(index = 0, count = 3)
 					)
 					SettingsInputItem(
 						value = preferenceManager.metubeUrl,
@@ -205,7 +216,22 @@ fun SettingsPlaybackScreen() {
 						onValidate = { it.isBlank() || it.startsWith("http") },
 						content = { Text(stringResource(R.string.option_metube_url)) },
 						supportingContent = { Text(stringResource(R.string.subtitle_metube_url)) },
-						shapes = SegmentedListItemDefaults.segmentedShapes(index = 1, count = 2)
+						shapes = SegmentedListItemDefaults.segmentedShapes(index = 1, count = 3)
+					)
+					SettingsNavItem(
+						onClick = {
+							if (metubeTesting) return@SettingsNavItem
+							metubeTesting = true
+							metubeTestResult = null
+							scope.launch {
+								val status = youTubeRepository.testMeTube()
+								metubeTestResult = if (status.ok) "Connected \u00B7 ${status.detail}" else "Failed \u00B7 ${status.detail}"
+								metubeTesting = false
+							}
+						},
+						content = { Text(if (metubeTesting) stringResource(R.string.info_metube_testing) else stringResource(R.string.action_test_metube)) },
+						supportingContent = { Text(metubeTestResult ?: stringResource(R.string.info_metube_not_tested)) },
+						shapes = SegmentedListItemDefaults.segmentedShapes(index = 2, count = 3)
 					)
 				}
 			}
