@@ -44,7 +44,8 @@ fun AlbumListScreenGridItem(
 	onSetShareId: (String) -> Unit,
 	onPlayNext: () -> Unit,
 	onAddToQueue: () -> Unit,
-	onSetRating: (Int) -> Unit
+	onSetRating: (Int) -> Unit,
+	onClick: (() -> Unit)? = null
 ) {
 	val backStack = LocalNavStack.current
 	val snackBarManager = koinInject<SnackBarManager>()
@@ -59,7 +60,7 @@ fun AlbumListScreenGridItem(
 
 	Box(modifier) {
 		ArtGridItem(
-			onClick = dropUnlessResumed {
+			onClick = onClick ?: dropUnlessResumed {
 				scope.launch {
 					backStack.add(Screen.CollectionDetail(album.id, tab))
 				}

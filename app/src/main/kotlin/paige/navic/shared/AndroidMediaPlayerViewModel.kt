@@ -830,8 +830,7 @@ class AndroidMediaPlayerViewModel(
 				var delayMs = 20_000L
 				val deadline = System.currentTimeMillis() + 20 * 60 * 1000L
 				while (System.currentTimeMillis() < deadline) {
-					delay(delayMs)
-					delayMs = minOf(delayMs * 2, 120_000L)
+					delay(10_000L)
 					if (_uiState.value.queue.none { it.id == ytSong.id }) return@launch
 					val match = withContext(Dispatchers.IO) {
 						searchRepository.findLibraryMatchFor(ytSong)

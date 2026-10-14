@@ -238,8 +238,14 @@ fun SearchScreen(
 						verticalArrangement = Arrangement.spacedBy(8.dp)
 					) {
 						if (query.text.isNotBlank()) {
-							if (songs.isNotEmpty()) {
-								val ytSongs = songs.filter { it.id.startsWith("yt-") }
+							val serverSongs = songs.filter { !it.id.startsWith("yt-") }.take(10)
+							val ytSongs = songs.filter { it.id.startsWith("yt-") }.take(10)
+							val songSections = buildList {
+								if (serverSongs.isNotEmpty()) add(R.string.title_songs to serverSongs)
+								if (ytSongs.isNotEmpty()) add(R.string.title_youtube to ytSongs)
+							}
+							songSections.forEach { (titleRes, sectionSongs) ->
+								val isYouTubeSection = titleRes == R.string.title_youtube
 								item(span = { GridItemSpan(maxLineSpan) }) {
 									Row(
 										modifier = Modifier.padding(
@@ -249,13 +255,13 @@ fun SearchScreen(
 										verticalAlignment = Alignment.CenterVertically
 									) {
 										Text(
-											if (songs.isNotEmpty() && ytSongs.size == songs.size) stringResource(R.string.title_youtube) else stringResource(R.string.title_songs),
+											stringResource(titleRes),
 											style = MaterialTheme.typography.headlineSmall,
 											modifier = Modifier.weight(1f)
 										)
-										if (ytSongs.isNotEmpty()) {
+										if (isYouTubeSection) {
 											IconButton(onClick = {
-												ytSongs.forEach { downloadManager.downloadSong(it) }
+												sectionSongs.forEach { downloadManager.downloadSong(it) }
 											}) {
 												Icon(
 													Icons.Outlined.Download,
@@ -266,10 +272,10 @@ fun SearchScreen(
 									}
 								}
 								items(
-									songs.take(10).size,
+									sectionSongs.size,
 									span = { GridItemSpan(maxLineSpan) }
 								) { index ->
-									val song = songs[index]
+									val song = sectionSongs[index]
 									val isYt = song.id.startsWith("yt-")
 									val isDownloaded = downloadedSongs.containsKey(song.id)
 
@@ -454,6 +460,10 @@ fun SearchScreen(
 									onAddToQueue = { player.addToQueue(album as DomainSongCollection) },
 									rating = selectedAlbumRating,
 									onSetRating = { albumListViewModel.setRating(it) }
+									onClick = if (album.id.startsWith("yt-")) dropUnlessResumed {
+										query.clearText()
+										query.edit { insert(0, listOfNotNull(album.artistName, album.name).joinToString(" ")) }
+									} else null
 								)
 							}
 
