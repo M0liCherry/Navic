@@ -111,6 +111,64 @@ class SearchRepository(
 		}
 	}
 
+	/**
+	 * Look for a real library song matching a YouTube fallback entry.
+	 *
+	 * Used after a fallback song has been sent to MeTube: once Navidrome has
+	 * scanned the download, this finds it via a server-side search so the
+	 * player can swap the external item for the library one without the user
+	 * re-searching. Returns null while the server doesn't know the song yet.
+	 */
+	suspend fun findLibraryMatchFor(ytSong: DomainSong): DomainSong? {
+		if (!YouTubeRepository.isYouTubeSong(ytSong)) return null
+		return try {
+			val wantedTitle = normalize(ytSong.title)
+			val wantedArtist = normalize(ytSong.artistName ?: "")
+			if (wantedTitle.isBlank()) return null
+
+			val data = sessionManager.api.searchID3(
+				listOfNotNull(ytSong.artistName, ytSong.title).joinToString(" ")
+			)
+			if (data.songs.isEmpty()) return null
+
+			val best = data.songs
+				.mapNotNull { remote ->
+					val title = normalize(remote.title)
+					val artist = normalize(remote.artistName ?: "")
+					val titleScore = when {
+						title == wantedTitle -> 2
+						title.contains(wantedTitle) || wantedTitle.contains(title) -> 1
+						else -> return@mapNotNull null
+					}
+					val artistScore = when {
+						wantedArtist.isBlank() -> 0
+						artist == wantedArtist -> 2
+						artist.contains(wantedArtist) || wantedArtist.contains(artist) -> 1
+						else -> -1
+					}
+					if (artistScore < 0) return@mapNotNull null
+					Triple(remote, titleScore, artistScore)
+				}
+				.maxWithOrNull(compareBy({ it.second }, { it.third }))
+				?.first ?: return null
+
+			songDao.insertSongsIgnoringConflicts(listOf(best.toEntity()))
+			songDao.getSongById(best.id)?.toDomainModel()
+		} catch (e: Exception) {
+			if (e is CancellationException) throw e
+			Logger.w("SearchRepository", "library match lookup failed for ${ytSong.id}", e)
+			null
+		}
+	}
+
+	private fun normalize(s: String): String =
+		s.lowercase()
+			.replace(Regex("""\([^)]*\)"""), " ")
+			.replace(Regex("""\[[^]]*]"""), " ")
+			.replace(Regex("""[^a-z0-9]+"""), " ")
+			.replace(Regex("""\s+"""), " ")
+			.trim()
+
 	private suspend fun performLocalSearch(query: String): List<Any> {
 		val localAlbums = albumDao.searchAlbumsList(query).map { it.toDomainModel() }
 		val localArtists = artistDao.searchArtistsList(query).map { it.toDomainModel() }

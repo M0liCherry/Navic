@@ -61,6 +61,7 @@ val viewModelModule = module {
 			snackBarManager = get(),
 			audioGainManager = get(),
 			youTubeRepository = get(),
+			searchRepository = get(),
 		)
 	}
 

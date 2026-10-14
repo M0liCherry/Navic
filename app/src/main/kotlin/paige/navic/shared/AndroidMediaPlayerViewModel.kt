@@ -25,6 +25,7 @@ import com.google.common.util.concurrent.ListenableFuture
 import com.google.common.util.concurrent.MoreExecutors
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
@@ -45,6 +46,7 @@ import paige.navic.domain.model.DomainSong
 import paige.navic.domain.model.DomainSongCollection
 import paige.navic.domain.model.settings.ReplayGainMode
 import paige.navic.domain.repository.PlayerStateRepository
+import paige.navic.domain.repository.SearchRepository
 import paige.navic.domain.repository.SongRepository
 import paige.navic.domain.repository.YouTubeRepository
 import paige.navic.exoplayer.ExoStateHolder
@@ -67,7 +69,8 @@ class AndroidMediaPlayerViewModel(
 	private val albumDao: AlbumDao,
 	private val sessionManager: SessionManager,
 	private val snackBarManager: SnackBarManager,
-	private val youTubeRepository: YouTubeRepository
+	private val youTubeRepository: YouTubeRepository,
+	private val searchRepository: SearchRepository
 ) : MediaPlayerViewModel(
 	stateRepository = stateRepository,
 	songRepository = songRepository,
@@ -739,6 +742,7 @@ class AndroidMediaPlayerViewModel(
 				?: YouTubeRepository.watchUrl(YouTubeRepository.videoIdOf(song))
 			if (youTubeRepository.sendToMeTube(watchUrl)) {
 				Logger.i("MediaPlayer", "sent ${song.id} to MeTube")
+				watchForLibraryMatch(song)
 			} else {
 				Logger.w("MediaPlayer", "MeTube send failed for ${song.id}")
 			}
@@ -746,6 +750,72 @@ class AndroidMediaPlayerViewModel(
 			if (e is kotlinx.coroutines.CancellationException) throw e
 			Logger.w("MediaPlayer", "MeTube send failed for ${song.id}", e)
 		}
+	}
+
+	private val ytMatchJobs = mutableMapOf<String, Job>()
+
+	/**
+	 * After a fallback song has been handed to MeTube, poll the server until
+	 * Navidrome has scanned the download, then swap the external queue item
+	 * for the real library song (no manual resync or re-search needed).
+	 */
+	private fun watchForLibraryMatch(ytSong: DomainSong) {
+		if (!YouTubeRepository.isYouTubeSong(ytSong)) return
+		if (ytMatchJobs.containsKey(ytSong.id)) return
+		ytMatchJobs[ytSong.id] = viewModelScope.launch {
+			try {
+				var delayMs = 30_000L
+				val deadline = System.currentTimeMillis() + 20 * 60 * 1000L
+				while (System.currentTimeMillis() < deadline) {
+					delay(delayMs)
+					delayMs = minOf(delayMs * 2, 120_000L)
+					if (_uiState.value.queue.none { it.id == ytSong.id }) return@launch
+					val match = withContext(Dispatchers.IO) {
+						searchRepository.findLibraryMatchFor(ytSong)
+					} ?: continue
+					swapYouTubeWithLibrary(ytSong.id, match)
+					return@launch
+				}
+				Logger.i("MediaPlayer", "gave up waiting for library match for ${ytSong.id}")
+			} catch (e: Exception) {
+				if (e is kotlinx.coroutines.CancellationException) throw e
+				Logger.w("MediaPlayer", "library match watch failed for ${ytSong.id}", e)
+			} finally {
+				ytMatchJobs.remove(ytSong.id)
+			}
+		}
+	}
+
+	private fun swapYouTubeWithLibrary(ytId: String, match: DomainSong) = launchInView {
+		val player = controller
+		val queue = _uiState.value.queue
+		val indices = queue.indices.filter { queue[it].id == ytId }
+		if (indices.isEmpty()) return@launchInView
+		val currentIdx = _uiState.value.currentIndex
+		val isCurrent = currentIdx in indices &&
+			_uiState.value.currentSong?.id == ytId
+
+		if (player != null) {
+			val replacement = withContext(Dispatchers.Default) { match.toMediaItem() }
+			indices.forEach { index ->
+				if (index in 0 until player.mediaItemCount) {
+					player.replaceMediaItem(index, replacement)
+				}
+			}
+			if (isCurrent) {
+				val pos = player.currentPosition.coerceAtLeast(0L)
+				val resume = player.playWhenReady
+				player.seekTo(currentIdx, pos)
+				if (resume) player.play()
+			}
+		}
+		_uiState.update { state ->
+			state.copy(
+				queue = state.queue.map { if (it.id == ytId) match else it },
+				currentSong = if (state.currentSong?.id == ytId) match else state.currentSong
+			)
+		}
+		Logger.i("MediaPlayer", "swapped $ytId for library song ${match.id}")
 	}
 
 	private suspend fun resolveSongForPlayback(song: DomainSong): DomainSong {		if (!YouTubeRepository.isYouTubeSong(song)) return song
