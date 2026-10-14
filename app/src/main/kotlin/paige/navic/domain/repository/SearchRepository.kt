@@ -7,6 +7,8 @@
 package paige.navic.domain.repository
 
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import paige.navic.data.database.dao.AlbumDao
 import paige.navic.data.database.dao.ArtistDao
 import paige.navic.data.database.dao.PlaylistDao
@@ -52,10 +54,26 @@ class SearchRepository(
 					+ songs.map { it.toDomainModel() }
 					+ localPlaylists.map { it.toDomainModel() })
 
-				serverResults +
-					youTubeSongFallback(query, songs.map { it.toDomainModel() }) +
-					youTubeArtistFallback(query, artists.map { it.toDomainModel() }) +
-					youTubeAlbumFallback(query, albums.map { it.toDomainModel() })
+				// The three YouTube lookups run concurrently to keep this fast.
+				val extra = coroutineScope {
+					val songsJob = async {
+						youTubeSongFallback(
+							query,
+							songs.map { it.toDomainModel() })
+					}
+					val artistsJob = async {
+						youTubeArtistSupplement(
+							query,
+							artists.map { it.toDomainModel() })
+					}
+					val albumsJob = async {
+						youTubeAlbumSupplement(
+							query,
+							albums.map { it.toDomainModel() })
+					}
+					songsJob.await() + artistsJob.await() + albumsJob.await()
+				}
+				serverResults + extra
 			} catch (e: Exception) {
 				if (e is CancellationException) throw e
 				Logger.e(
@@ -87,11 +105,16 @@ class SearchRepository(
 		}
 	}
 
-	private suspend fun youTubeArtistFallback(query: String, serverArtists: List<DomainArtist>): List<DomainArtist> {
+	private suspend fun youTubeArtistSupplement(query: String, serverArtists: List<DomainArtist>): List<DomainArtist> {
 		if (!preferenceManager.youtubeFallbackEnabled) return emptyList()
-		if (serverArtists.isNotEmpty()) return emptyList()
 		return try {
-			youTubeRepository.searchArtists(query)
+			// Unlike songs, artists/albums always supplement: anything the
+			// server doesn't already have is appended below server results.
+			val known = serverArtists.map { normalize(it.name) }.toSet()
+			youTubeRepository.searchArtists(query).filter { artist ->
+				val name = normalize(artist.name)
+				name.isNotBlank() && known.none { it == name || it.contains(name) || name.contains(it) }
+			}
 		} catch (e: Exception) {
 			if (e is CancellationException) throw e
 			Logger.w("SearchRepository", "YouTube artist fallback search failed", e)
@@ -99,11 +122,20 @@ class SearchRepository(
 		}
 	}
 
-	private suspend fun youTubeAlbumFallback(query: String, serverAlbums: List<DomainAlbum>): List<DomainAlbum> {
+	private suspend fun youTubeAlbumSupplement(query: String, serverAlbums: List<DomainAlbum>): List<DomainAlbum> {
 		if (!preferenceManager.youtubeFallbackEnabled) return emptyList()
-		if (serverAlbums.isNotEmpty()) return emptyList()
 		return try {
-			youTubeRepository.searchAlbums(query)
+			val known = serverAlbums.map {
+				normalize(it.name.orEmpty()) to normalize(it.artistName.orEmpty())
+			}.toSet()
+			youTubeRepository.searchAlbums(query).filter { album ->
+				val title = normalize(album.name.orEmpty())
+				if (title.isBlank()) return@filter false
+				val artist = normalize(album.artistName.orEmpty())
+				known.none { (knownTitle, knownArtist) ->
+					knownTitle == title && (knownArtist.isBlank() || artist.isBlank() || knownArtist == artist)
+				}
+			}
 		} catch (e: Exception) {
 			if (e is CancellationException) throw e
 			Logger.w("SearchRepository", "YouTube album fallback search failed", e)
