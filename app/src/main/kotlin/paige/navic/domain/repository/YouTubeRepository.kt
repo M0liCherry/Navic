@@ -6,8 +6,8 @@
 
 package paige.navic.domain.repository
 
-import io.ktor.client.plugins.ContentNegotiation
 import io.ktor.client.plugins.HttpTimeout
+import io.ktor.client.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.client.request.header
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
