@@ -982,7 +982,7 @@ class AndroidMediaPlayerViewModel(
 		failPlayback("Couldn't load this YouTube song.")
 	}
 
-	override fun playNow(collection: DomainSongCollection, startIndex: Int = 0) {
+	override fun playNow(collection: DomainSongCollection, startIndex: Int) {
 		val songs = if (collection is DomainAlbum) collection.songs.sortedWith(
 			compareBy({ it.discNumber }, { it.trackNumber })
 		) else collection.songs

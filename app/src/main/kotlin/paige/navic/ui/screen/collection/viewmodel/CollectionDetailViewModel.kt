@@ -178,7 +178,7 @@ class CollectionDetailViewModel(
 			).joinToString(" ")
 			val wanted = normalizeTitle(album)
 			sessionManager.api.searchID3(query).songs
-				.filter { normalizeTitle(it.albumTitle) == wanted }
+				.filter { normalizeTitle(it.albumTitle.orEmpty()) == wanted }
 				.map { it.toEntity().toDomainModel() }
 		} catch (e: Exception) {
 			Logger.w("CollectionDetailViewModel", "server album match failed", e)
@@ -194,7 +194,8 @@ class CollectionDetailViewModel(
 			.replace(Regex("""\s+"""), " ")
 			.trim()
 
-	fun selectSong(song: DomainSong) {		viewModelScope.launch {
+	fun selectSong(song: DomainSong) {
+		viewModelScope.launch {
 			selectedSong.value = song
 			selectedSongIsStarred.value = songRepository.isSongStarred(song)
 			selectedSongRating.value = songRepository.getSongRating(song)
