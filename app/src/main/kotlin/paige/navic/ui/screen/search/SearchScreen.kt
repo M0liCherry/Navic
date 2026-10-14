@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -73,6 +74,7 @@ import paige.navic.domain.model.settings.ExplicitContentPlayback
 import paige.navic.domain.model.settings.ListViewMode
 import paige.navic.ui.icons.Icons
 import paige.navic.ui.icons.outlined.Close
+import paige.navic.ui.icons.outlined.Download
 import paige.navic.ui.icons.outlined.History
 import paige.navic.ui.icons.outlined.Lock
 import paige.navic.ui.icons.outlined.Offline
@@ -237,15 +239,31 @@ fun SearchScreen(
 					) {
 						if (query.text.isNotBlank()) {
 							if (songs.isNotEmpty()) {
+								val ytSongs = songs.filter { it.id.startsWith("yt-") }
 								item(span = { GridItemSpan(maxLineSpan) }) {
-									Text(
-										if (songs.any { it.id.startsWith("yt-") } && songs.none { !it.id.startsWith("yt-") }) stringResource(R.string.title_youtube) else stringResource(R.string.title_songs),
-										style = MaterialTheme.typography.headlineSmall,
+									Row(
 										modifier = Modifier.padding(
 											horizontal = 16.dp,
 											vertical = 8.dp
+										),
+										verticalAlignment = Alignment.CenterVertically
+									) {
+										Text(
+											if (songs.isNotEmpty() && ytSongs.size == songs.size) stringResource(R.string.title_youtube) else stringResource(R.string.title_songs),
+											style = MaterialTheme.typography.headlineSmall,
+											modifier = Modifier.weight(1f)
 										)
-									)
+										if (ytSongs.isNotEmpty()) {
+											IconButton(onClick = {
+												ytSongs.forEach { downloadManager.downloadSong(it) }
+											}) {
+												Icon(
+													Icons.Outlined.Download,
+													contentDescription = stringResource(R.string.action_download)
+												)
+											}
+										}
+									}
 								}
 								items(
 									songs.take(10).size,

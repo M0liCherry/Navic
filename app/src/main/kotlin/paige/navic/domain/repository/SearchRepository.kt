@@ -19,7 +19,6 @@ import paige.navic.domain.manager.ConnectivityManager
 import paige.navic.domain.manager.PreferenceManager
 import paige.navic.domain.manager.SessionManager
 import paige.navic.domain.model.DomainAlbum
-import paige.navic.domain.model.DomainArtist
 import paige.navic.domain.model.DomainSong
 import paige.navic.util.Logger
 
@@ -54,24 +53,19 @@ class SearchRepository(
 					+ songs.map { it.toDomainModel() }
 					+ localPlaylists.map { it.toDomainModel() })
 
-				// The three YouTube lookups run concurrently to keep this fast.
+				// The two YouTube lookups run concurrently to keep this fast.
 				val extra = coroutineScope {
 					val songsJob = async {
 						youTubeSongFallback(
 							query,
 							songs.map { it.toDomainModel() })
 					}
-					val artistsJob = async {
-						youTubeArtistSupplement(
-							query,
-							artists.map { it.toDomainModel() })
-					}
 					val albumsJob = async {
 						youTubeAlbumSupplement(
 							query,
 							albums.map { it.toDomainModel() })
 					}
-					songsJob.await() + artistsJob.await() + albumsJob.await()
+					songsJob.await() + albumsJob.await()
 				}
 				serverResults + extra
 			} catch (e: Exception) {
@@ -101,23 +95,6 @@ class SearchRepository(
 		} catch (e: Exception) {
 			if (e is CancellationException) throw e
 			Logger.w("SearchRepository", "YouTube fallback search failed", e)
-			emptyList()
-		}
-	}
-
-	private suspend fun youTubeArtistSupplement(query: String, serverArtists: List<DomainArtist>): List<DomainArtist> {
-		if (!preferenceManager.youtubeFallbackEnabled) return emptyList()
-		return try {
-			// Unlike songs, artists/albums always supplement: anything the
-			// server doesn't already have is appended below server results.
-			val known = serverArtists.map { normalize(it.name) }.toSet()
-			youTubeRepository.searchArtists(query).filter { artist ->
-				val name = normalize(artist.name)
-				name.isNotBlank() && known.none { it == name || it.contains(name) || name.contains(it) }
-			}
-		} catch (e: Exception) {
-			if (e is CancellationException) throw e
-			Logger.w("SearchRepository", "YouTube artist fallback search failed", e)
 			emptyList()
 		}
 	}

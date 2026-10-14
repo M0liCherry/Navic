@@ -28,7 +28,6 @@ import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import paige.navic.domain.manager.PreferenceManager
 import paige.navic.domain.model.DomainAlbum
-import paige.navic.domain.model.DomainArtist
 import paige.navic.domain.model.DomainExplicitStatus
 import paige.navic.domain.model.DomainSong
 import paige.navic.domain.model.DomainSongArtist
@@ -63,7 +62,6 @@ class YouTubeRepository(
 		private const val PLAYER_URL = "https://music.youtube.com/youtubei/v1/player"
 		// Innertube filter params: songs / artists / albums only (never videos)
 		private const val SONGS_FILTER_PARAM = "EgWKAQIIAWoMEA4QChADEAQQCRAF"
-		private const val ARTISTS_FILTER_PARAM = "EgWKAQIgAWoMEA4QChADEAQQCRAF"
 		private const val ALBUMS_FILTER_PARAM = "EgWKAQIYAWoMEA4QChADEAQQCRAF"
 		private const val CLIENT_NAME = "WEB_REMIX"
 		private const val CLIENT_VERSION = "1.20250101.00.00"
@@ -104,17 +102,6 @@ class YouTubeRepository(
 			parseSongItems(root).take(maxResults())
 		} catch (e: Exception) {
 			Logger.w("YouTubeRepository", "search failed for '$query'", e)
-			emptyList()
-		}
-	}
-
-	suspend fun searchArtists(query: String): List<DomainArtist> {
-		if (query.isBlank()) return emptyList()
-		return try {
-			val root = innertubeSearch(query, ARTISTS_FILTER_PARAM) ?: return emptyList()
-			parseArtistItems(root).take(maxResults())
-		} catch (e: Exception) {
-			Logger.w("YouTubeRepository", "artist search failed for '$query'", e)
 			emptyList()
 		}
 	}
@@ -281,32 +268,6 @@ class YouTubeRepository(
 			?.obj("thumbnail")
 			?.arr("thumbnails")
 		return thumbnails?.lastOrNull().let { it as? JsonObject }?.str("url")
-	}
-
-	private fun parseArtistItems(root: JsonObject): List<DomainArtist> {
-		val renderers = mutableListOf<JsonObject>()
-		collectRenderers(root, "musicResponsiveListItemRenderer", renderers)
-		val artists = mutableListOf<DomainArtist>()
-		val seen = mutableSetOf<String>()
-		for (r in renderers) {
-			try {
-				val browseId = r.obj("navigationEndpoint")?.obj("browseEndpoint")?.str("browseId")
-					?: continue
-				if (!seen.add(browseId)) continue
-				val name = listItemTitle(r, 0)
-				if (name.isBlank()) continue
-				val thumb = listItemThumbnail(r)
-				artists += DomainArtist(
-					id = "$PREFIX-artist-$browseId",
-					name = name,
-					coverArtId = thumb,
-					artistImageUrl = thumb
-				)
-			} catch (_: Exception) {
-				continue
-			}
-		}
-		return artists
 	}
 
 	private fun parseAlbumItems(root: JsonObject): List<DomainAlbum> {
