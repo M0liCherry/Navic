@@ -459,11 +459,7 @@ fun SearchScreen(
 									onPlayNext = { player.playNext(album as DomainSongCollection) },
 									onAddToQueue = { player.addToQueue(album as DomainSongCollection) },
 									rating = selectedAlbumRating,
-									onSetRating = { albumListViewModel.setRating(it) },
-									onClick = if (album.id.startsWith("yt-")) dropUnlessResumed {
-										query.clearText()
-										query.edit { insert(0, listOfNotNull(album.artistName, album.name).joinToString(" ")) }
-									} else null
+									onSetRating = { albumListViewModel.setRating(it) }
 								)
 							}
 

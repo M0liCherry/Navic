@@ -34,6 +34,7 @@ import paige.navic.domain.model.DomainSongArtist
 import paige.navic.util.Logger
 import paige.navic.util.createHttpClientWithPreferences
 import kotlin.time.Clock
+import kotlin.time.Duration
 import kotlin.time.Duration.Companion.seconds
 
 /**
@@ -60,6 +61,7 @@ class YouTubeRepository(
 		private const val ANDROID_KEY = "AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8"
 		private const val SEARCH_URL = "https://music.youtube.com/youtubei/v1/search"
 		private const val PLAYER_URL = "https://music.youtube.com/youtubei/v1/player"
+		private const val BROWSE_URL = "https://music.youtube.com/youtubei/v1/browse"
 		// Innertube filter params: songs / artists / albums only (never videos)
 		private const val SONGS_FILTER_PARAM = "EgWKAQIIAWoMEA4QChADEAQQCRAF"
 		private const val ALBUMS_FILTER_PARAM = "EgWKAQIYAWoMEA4QChADEAQQCRAF"
@@ -92,6 +94,8 @@ class YouTubeRepository(
 
 	private val streamCache = mutableMapOf<String, String>()
 	private val streamCacheMutex = Mutex()
+	private val albumCache = mutableMapOf<String, DomainAlbum>()
+	private val albumCacheMutex = Mutex()
 
 	fun maxResults(): Int = preferenceManager.youtubeMaxResults.coerceIn(1, 25)
 
@@ -110,7 +114,9 @@ class YouTubeRepository(
 		if (query.isBlank()) return emptyList()
 		return try {
 			val root = innertubeSearch(query, ALBUMS_FILTER_PARAM) ?: return emptyList()
-			parseAlbumItems(root).take(maxResults())
+			parseAlbumItems(root).take(maxResults()).also { albums ->
+				albumCacheMutex.withLock { albums.forEach { albumCache[it.id] = it } }
+			}
 		} catch (e: Exception) {
 			Logger.w("YouTubeRepository", "album search failed for '$query'", e)
 			emptyList()
@@ -241,6 +247,120 @@ class YouTubeRepository(
 			Logger.w("YouTubeRepository", "metube test failed", e)
 			MeTubeStatus(false, e.message ?: e.toString())
 		}
+	}
+
+	suspend fun cachedAlbum(id: String): DomainAlbum? =
+		albumCacheMutex.withLock { albumCache[id] }
+
+	/**
+	 * Fetch a full YouTube Music album (header + track list) by browseId.
+	 * Track durations are not exposed here, so tracks carry ZERO duration;
+	 * the player reports the real duration once streaming.
+	 */
+	suspend fun getAlbum(browseId: String): DomainAlbum {
+		val requestJson = """{"context":{"client":{"clientName":"$CLIENT_NAME","clientVersion":"$CLIENT_VERSION","hl":"en","gl":"US"}},"browseId":${json.encodeToString(browseId)}}"""
+		val response = client.post("$BROWSE_URL?prettyPrint=false&key=$YTM_KEY") {
+			contentType(ContentType.Application.Json)
+			header("Origin", "https://music.youtube.com")
+			header("Referer", "https://music.youtube.com/")
+			header("Accept-Language", "en-US,en;q=0.9")
+			header(
+				"User-Agent",
+				"Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
+			)
+			setBody(requestJson)
+		}
+		if (!response.status.isSuccess()) throw IllegalStateException("browse failed: ${response.status}")
+		val root = json.parseToJsonElement(response.bodyAsText()).jsonObject
+		val columns = root.obj("contents")?.obj("twoColumnBrowseResultsRenderer")
+			?: throw IllegalStateException("no album contents")
+		val tabs = columns.arr("tabs") ?: throw IllegalStateException("no album tabs")
+		val sections = (tabs.firstOrNull() as? JsonObject)
+			?.obj("tabRenderer")?.obj("content")?.obj("sectionListRenderer")?.arr("contents")
+			?: throw IllegalStateException("no album sections")
+		val header = sections.mapNotNull { (it as? JsonObject)?.obj("musicResponsiveHeaderRenderer") }
+			.firstOrNull() ?: throw IllegalStateException("no album header")
+		val title = runsText(header["text"] ?: header.obj("title") ?: throw IllegalStateException("no album title"))
+			.ifBlank { "Unknown album" }
+		val subtitleParts = runsText(header.obj("subtitle") ?: JsonObject(emptyMap()))
+			.split("\u00B7").map { it.trim() }.filter { it.isNotEmpty() }
+		val kind = subtitleParts.getOrNull(0)
+			?.takeIf { it.equals("album", true) || it.equals("single", true) || it.equals("ep", true) }
+		val year = subtitleParts.mapNotNull { it.toIntOrNull() }.firstOrNull { it in 1900..2100 }
+		val thumb = header.obj("thumbnail")?.obj("musicThumbnailRenderer")
+			?.obj("thumbnail")?.arr("thumbnails")?.lastOrNull()
+			.let { it as? JsonObject }?.str("url")
+		val shelf = ((columns.obj("secondaryContents")?.obj("sectionListRenderer")?.arr("contents")
+			?: JsonArray(emptyList())).mapNotNull { (it as? JsonObject)?.obj("musicShelfRenderer") }
+			.firstOrNull())
+			?: throw IllegalStateException("no album tracks")
+		val cached = albumCacheMutex.withLock { albumCache["$PREFIX-album-$browseId"] }
+		val artistName = cached?.artistName?.takeIf { it.isNotBlank() } ?: "Unknown artist"
+		val tracks = (shelf.arr("contents") ?: JsonArray(emptyList())).mapNotNull { el ->
+			val r = el as? JsonObject ?: return@mapNotNull null
+			val videoId = extractVideoId(r) ?: return@mapNotNull null
+			val trackTitle = listItemTitle(r, 0).ifBlank { return@mapNotNull null }
+			DomainSong(
+				id = "$PREFIX$videoId",
+				title = trackTitle,
+				artistName = artistName,
+				artistId = "$PREFIX-artist-${artistName.hashCode()}",
+				albumTitle = title,
+				albumId = "$PREFIX-album-$browseId",
+				parentId = null,
+				comment = null,
+				trackNumber = null,
+				discNumber = null,
+				isrc = emptyList(),
+				year = year,
+				genre = null,
+				genres = emptyList(),
+				moods = emptyList(),
+				duration = Duration.ZERO,
+				bpm = null,
+				contributors = emptyList(),
+				playCount = 0,
+				userRating = null,
+				averageRating = null,
+				bitRate = null,
+				bitDepth = null,
+				sampleRate = null,
+				audioChannelCount = null,
+				replayGain = null,
+				fileSize = 0,
+				fileExtension = "webm",
+				mimeType = "audio/webm",
+				filePath = watchUrl(videoId),
+				starredAt = null,
+				coverArtId = thumb,
+				musicBrainzId = null,
+				explicitStatus = DomainExplicitStatus.Unknown,
+				artists = listOf(DomainSongArtist(id = "$PREFIX-artist-${artistName.hashCode()}", name = artistName)),
+				albumArtists = emptyList(),
+				isExternal = true
+			)
+		}.mapIndexed { index, song -> song.copy(trackNumber = index + 1) }
+		if (tracks.isEmpty()) throw IllegalStateException("album has no playable tracks")
+		return DomainAlbum(
+			id = "$PREFIX-album-$browseId",
+			name = title,
+			artistName = artistName,
+			artistId = "$PREFIX-artist-${artistName.hashCode()}",
+			year = year,
+			coverArtId = thumb,
+			genre = null,
+			genres = emptyList(),
+			songCount = tracks.size,
+			duration = tracks.fold(Duration.ZERO) { acc, song -> acc + song.duration },
+			createdAt = Clock.System.now(),
+			starredAt = null,
+			lastPlayedAt = null,
+			userRating = null,
+			version = kind,
+			musicBrainzId = null,
+			songs = tracks,
+			isExternal = true
+		)
 	}
 
 	// --- parsing ---

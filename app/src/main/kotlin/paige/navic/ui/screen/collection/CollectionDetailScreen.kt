@@ -108,6 +108,8 @@ fun CollectionDetailScreen(
 
 	val rating by viewModel.rating.collectAsStateWithLifecycle()
 
+	val isYouTubeAlbum = collectionId.startsWith("yt-")
+
 	val titleAlpha by remember {
 		derivedStateOf {
 			if (viewModel.listState.firstVisibleItemIndex >= 1) return@derivedStateOf 1f
@@ -147,12 +149,12 @@ fun CollectionDetailScreen(
 					onPlayNext = { if (collection != null) player.playNext(collection) },
 					onAddToQueue = { if (collection != null) player.addToQueue(collection) },
 					downloadStatus = downloadStatus,
-					rating = if (collection !is DomainPlaylist) rating else null,
-					onSetRating = if (collection !is DomainPlaylist) {
+					rating = if (!isYouTubeAlbum && collection !is DomainPlaylist) rating else null,
+					onSetRating = if (!isYouTubeAlbum && collection !is DomainPlaylist) {
 						{ viewModel.rateAlbum(it) }
 					} else null,
-					starred = if (collection !is DomainPlaylist) starred else null,
-					onSetStarred = if (collection !is DomainPlaylist) {
+					starred = if (!isYouTubeAlbum && collection !is DomainPlaylist) starred else null,
+					onSetStarred = if (!isYouTubeAlbum && collection !is DomainPlaylist) {
 						{ viewModel.starAlbum(it) }
 					} else null,
 					refreshCollection = { viewModel.refreshCollection(false) }
@@ -360,7 +362,8 @@ fun CollectionDetailScreen(
 					item { CollectionDetailScreenFooterRow(collection) }
 
 					(collection as? DomainAlbum)?.artistName?.let { artistName ->
-						collectionDetailScreenMoreByArtistRow(
+						if (!isYouTubeAlbum) {
+							collectionDetailScreenMoreByArtistRow(
 							artistName = artistName,
 							artistAlbums = otherAlbums,
 							selectedAlbum = selectedAlbum,
@@ -379,6 +382,7 @@ fun CollectionDetailScreen(
 							onDeselect = { viewModel.clearSelection() },
 							tab = tab
 						)
+						}
 					}
 				}
 			}

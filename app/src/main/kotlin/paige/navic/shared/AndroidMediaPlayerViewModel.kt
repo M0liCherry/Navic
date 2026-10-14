@@ -447,6 +447,7 @@ class AndroidMediaPlayerViewModel(
 
 	override fun addToQueueSingle(song: DomainSong, notify: Boolean) = launchInView {
 		val resolved = resolveSongForPlayback(song) ?: return@launchInView
+		if (YouTubeRepository.isYouTubeSong(resolved)) sendYouTubeToMeTube(resolved)
 		controller?.addMediaItem(withContext(Dispatchers.Default) { resolved.toMediaItem() })
 		_uiState.update { state ->
 			val newQueue = state.queue + resolved
@@ -474,6 +475,7 @@ class AndroidMediaPlayerViewModel(
 	override fun addToQueue(songs: List<DomainSong>, notify: Boolean) = launchInView {
 		val resolvedSongs = withContext(Dispatchers.IO) { songs.mapNotNull { resolveSongForPlayback(it) } }
 		if (resolvedSongs.isEmpty()) return@launchInView
+		resolvedSongs.filter { YouTubeRepository.isYouTubeSong(it) }.forEach { sendYouTubeToMeTube(it) }
 		val items = withContext(Dispatchers.Default) { resolvedSongs.map { it.toMediaItem() } }
 		controller?.addMediaItems(items)
 		_uiState.update { state ->
@@ -558,6 +560,7 @@ class AndroidMediaPlayerViewModel(
 			_uiState.value.currentIndex + 1,
             withContext(Dispatchers.Default) { resolved.toMediaItem() }
 		)
+		if (YouTubeRepository.isYouTubeSong(resolved)) sendYouTubeToMeTube(resolved)
 		_uiState.update { state ->
 			val newQueue =
 				if (state.queue.isEmpty())
@@ -574,15 +577,13 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun playNext(collection: DomainSongCollection) = launchInView {
-		val (items, newCollection) = withContext(Dispatchers.Default) {
-            val newCollection =
-                if (collection is DomainAlbum) collection.songs.sortedWith(
-                    compareBy(
-                        { it.discNumber },
-                        { it.trackNumber }
-                    )) else collection.songs
-            newCollection.map { it.toMediaItem() } to newCollection
-        }
+		val sorted = if (collection is DomainAlbum) collection.songs.sortedWith(
+			compareBy({ it.discNumber }, { it.trackNumber })
+		) else collection.songs
+		val newCollection = withContext(Dispatchers.IO) { sorted.mapNotNull { resolveSongForPlayback(it) } }
+		if (newCollection.isEmpty()) return@launchInView
+		newCollection.filter { YouTubeRepository.isYouTubeSong(it) }.forEach { sendYouTubeToMeTube(it) }
+		val items = withContext(Dispatchers.Default) { newCollection.map { it.toMediaItem() } }
 		controller?.addMediaItems(_uiState.value.currentIndex + 1, items)
 		_uiState.update { state ->
 			val newQueue =
@@ -676,10 +677,17 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun shufflePlay(collection: DomainSongCollection) = launchInView {
-		val (shuffledSongs, mediaItems) = withContext(Dispatchers.Default) {
-            val songs = collection.songs.shuffled()
-            songs to songs.map { it.toMediaItem() }
-        }
+		val shuffledSongs = withContext(Dispatchers.IO) {
+			collection.songs.shuffled().mapNotNull { resolveSongForPlayback(it) }
+		}
+		if (shuffledSongs.isEmpty()) {
+			failPlayback("Couldn't load this YouTube song.")
+			return@launchInView
+		}
+		shuffledSongs.filter { YouTubeRepository.isYouTubeSong(it) }.forEach { sendYouTubeToMeTube(it) }
+		val mediaItems = withContext(Dispatchers.Default) {
+			shuffledSongs.map { it.toMediaItem() }
+		}
 
 		controller?.let { player ->
 			player.shuffleModeEnabled = false
@@ -972,6 +980,16 @@ class AndroidMediaPlayerViewModel(
 			return@launchInView
 		}
 		failPlayback("Couldn't load this YouTube song.")
+	}
+
+	override fun playNow(collection: DomainSongCollection, startIndex: Int = 0) {
+		val songs = if (collection is DomainAlbum) collection.songs.sortedWith(
+			compareBy({ it.discNumber }, { it.trackNumber })
+		) else collection.songs
+		// Album play with YouTube tracks: fetch the external ones server-side
+		// first, then play everything (streams instantly, library follows).
+		songs.filter { YouTubeRepository.isYouTubeSong(it) }.forEach { sendYouTubeToMeTube(it) }
+		playNow(songs, startIndex)
 	}
 
 	override fun playNow(songs: List<DomainSong>, startIndex: Int) = launchInView {

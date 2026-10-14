@@ -158,7 +158,8 @@ val viewModelModule = module {
 			downloadManager = get(),
 			sessionManager = get(),
 			snackBarManager = get(),
-			connectivityManager = get()
+			connectivityManager = get(),
+			youTubeRepository = get()
 		)
 	}
 	viewModelOf(::SongDetailViewModel)
