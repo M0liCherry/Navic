@@ -460,15 +460,21 @@ class DownloadManager(
 
 		// Preferred path: hand the URL to the server's MeTube instance so the
 		// *server* fetches the media instead of the phone.
-		if (preferenceManager.metubeUrl.trim().isNotBlank()) {
+		if (youTubeRepository.effectiveMetubeBase().isNotBlank()) {
 			downloadDao.insertDownload(DownloadEntity(song.id, DownloadStatus.DOWNLOADING, 0f))
 			try {
-				val ok = youTubeRepository.sendToMeTube(watchUrl)
-				if (ok) {
-					Logger.i("DownloadManager", "sent ${song.id} to MeTube")
-					downloadDao.insertDownload(DownloadEntity(song.id, DownloadStatus.DOWNLOADED, 1f, null))
-				} else {
-					downloadDao.insertDownload(DownloadEntity(song.id, DownloadStatus.FAILED, 0f))
+				when (youTubeRepository.sendToMeTube(watchUrl)) {
+					YouTubeRepository.MeTubeSendResult.Ok -> {
+						Logger.i("DownloadManager", "sent ${song.id} to MeTube")
+						downloadDao.insertDownload(DownloadEntity(song.id, DownloadStatus.DOWNLOADED, 1f, null))
+					}
+					YouTubeRepository.MeTubeSendResult.WrongPassword -> {
+						Logger.w("DownloadManager", "MeTube rejected credentials for ${song.id}")
+						downloadDao.insertDownload(DownloadEntity(song.id, DownloadStatus.FAILED, 0f))
+					}
+					YouTubeRepository.MeTubeSendResult.Failed -> {
+						downloadDao.insertDownload(DownloadEntity(song.id, DownloadStatus.FAILED, 0f))
+					}
 				}
 			} catch (e: Exception) {
 				if (e is CancellationException) throw e

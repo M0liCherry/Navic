@@ -14,12 +14,15 @@ import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
 import io.ktor.http.ContentType
+import io.ktor.http.HttpHeaders
+import io.ktor.http.HttpStatusCode
 import io.ktor.http.contentType
 import io.ktor.http.isSuccess
 import io.ktor.serialization.kotlinx.json.json
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.serialization.encodeToString
+import kotlin.io.encoding.Base64
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonObject
@@ -27,6 +30,8 @@ import kotlinx.serialization.json.contentOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
+import com.russhwolf.settings.Settings
+import com.russhwolf.settings.getString
 import paige.navic.domain.manager.PreferenceManager
 import paige.navic.domain.model.DomainAlbum
 import paige.navic.domain.model.DomainExplicitStatus
@@ -53,7 +58,8 @@ import kotlin.time.Duration.Companion.seconds
  * media instead of the phone.
  */
 class YouTubeRepository(
-	private val preferenceManager: PreferenceManager
+	private val preferenceManager: PreferenceManager,
+	private val settings: Settings
 ) {
 	companion object {
 		const val PREFIX = "yt-"
@@ -200,25 +206,57 @@ class YouTubeRepository(
 	}
 
 	/**
-	 * Send a YouTube URL to the server's MeTube instance so the *server*
-	 * downloads it (`POST {metubeUrl}/add`).
+	 * Effective MeTube root. Primary contract: derived from the Navidrome
+	 * server URL as `<server>/metube`. A manual override exists for servers
+	 * that don't follow the contract. Never ends with '/'.
 	 */
-	suspend fun sendToMeTube(watchUrl: String): Boolean {
-		val base = preferenceManager.metubeUrl.trim().trimEnd('/')
-		if (base.isBlank()) return false
+	fun effectiveMetubeBase(): String {
+		val custom = preferenceManager.customMetubeUrl.trim().trimEnd('/')
+		if (custom.isNotBlank()) return custom
+		val server = settings.getString("instanceUrl", "").trim().trimEnd('/')
+		if (server.isBlank()) return ""
+		return "$server/metube"
+	}
+
+	private fun metubeAuthHeader(): String {
+		val credentials = "downloader:${preferenceManager.downloadPassword}"
+		return "Basic " + Base64.Default.encode(credentials.toByteArray())
+	}
+
+	sealed interface MeTubeSendResult {
+		data object Ok : MeTubeSendResult
+		data object WrongPassword : MeTubeSendResult
+		data object Failed : MeTubeSendResult
+	}
+
+	/**
+	 * Send a YouTube URL to the server's MeTube instance so the *server*
+	 * downloads it (`POST {base}/add`). The server strips the `/metube`
+	 * prefix, so paths and bodies are exactly MeTube's own shapes.
+	 * HTTP Basic credentials go on every call; a 401 is reported as
+	 * [MeTubeSendResult.WrongPassword] and is never retried here.
+	 */
+	suspend fun sendToMeTube(watchUrl: String): MeTubeSendResult {
+		val base = effectiveMetubeBase()
+		if (base.isBlank()) return MeTubeSendResult.Failed
 		return try {
 			val response = client.post("$base/add") {
 				contentType(ContentType.Application.Json)
+				header(HttpHeaders.Authorization, metubeAuthHeader())
 				setBody("""{"url":${json.encodeToString(watchUrl)},"quality":"best","format":"mp3","download_type":"audio","codec":"auto","audio_tags":"with_cover"}""")
+			}
+			if (response.status == HttpStatusCode.Unauthorized) {
+				Logger.w("YouTubeRepository", "metube rejected credentials")
+				return MeTubeSendResult.WrongPassword
 			}
 			if (!response.status.isSuccess()) {
 				Logger.w("YouTubeRepository", "metube rejected: ${response.status}")
-				return false
+				return MeTubeSendResult.Failed
 			}
-			true
+			MeTubeSendResult.Ok
 		} catch (e: Exception) {
 			Logger.w("YouTubeRepository", "metube request failed", e)
-			false
+			MeTubeSendResult.Failed
 		}
 	}
 
@@ -229,12 +267,16 @@ class YouTubeRepository(
 	 * endpoint. Returns converter/engine versions and round-trip latency.
 	 */
 	suspend fun testMeTube(): MeTubeStatus {
-		val base = preferenceManager.metubeUrl.trim().trimEnd('/')
-		if (base.isBlank()) return MeTubeStatus(false, "No MeTube URL configured")
+		val base = effectiveMetubeBase()
+		if (base.isBlank()) return MeTubeStatus(false, "No server URL configured")
 		return try {
 			val start = Clock.System.now()
 			val response = client.get("$base/version") {
 				header("Accept-Language", "en-US,en;q=0.9")
+				header(HttpHeaders.Authorization, metubeAuthHeader())
+			}
+			if (response.status == HttpStatusCode.Unauthorized) {
+				return MeTubeStatus(false, "Wrong download password")
 			}
 			if (!response.status.isSuccess()) {
 				return MeTubeStatus(false, "HTTP ${response.status.value}")

@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import paige.navic.R
 import paige.navic.data.database.dao.AlbumDao
 import paige.navic.data.database.mapper.toDomainModel
 import paige.navic.domain.manager.AudioGainManager
@@ -791,19 +792,27 @@ class AndroidMediaPlayerViewModel(
 
 	private suspend fun sendToMeTubeNow(song: DomainSong): Boolean {
 		if (!YouTubeRepository.isYouTubeSong(song)) return false
-		if (preferenceManager.metubeUrl.trim().isBlank()) return false
+		if (youTubeRepository.effectiveMetubeBase().isBlank()) return false
 		return try {
 			val watchUrl = song.filePath?.takeIf { it.contains("watch?v=") }
 				?: YouTubeRepository.watchUrl(YouTubeRepository.videoIdOf(song))
-			val ok = withContext(Dispatchers.IO) { youTubeRepository.sendToMeTube(watchUrl) }
-			if (ok) {
-				Logger.i("MediaPlayer", "sent ${song.id} to MeTube")
-				ytMetubeOk.add(song.id)
-				watchForLibraryMatch(song)
-			} else {
-				Logger.w("MediaPlayer", "MeTube send failed for ${song.id}")
+			when (withContext(Dispatchers.IO) { youTubeRepository.sendToMeTube(watchUrl) }) {
+				YouTubeRepository.MeTubeSendResult.Ok -> {
+					Logger.i("MediaPlayer", "sent ${song.id} to MeTube")
+					ytMetubeOk.add(song.id)
+					watchForLibraryMatch(song)
+					true
+				}
+				YouTubeRepository.MeTubeSendResult.WrongPassword -> {
+					Logger.w("MediaPlayer", "MeTube rejected credentials for ${song.id}")
+					snackBarManager.notify(R.string.info_wrong_download_password)
+					false
+				}
+				YouTubeRepository.MeTubeSendResult.Failed -> {
+					Logger.w("MediaPlayer", "MeTube send failed for ${song.id}")
+					false
+				}
 			}
-			ok
 		} catch (e: Exception) {
 			if (e is kotlinx.coroutines.CancellationException) throw e
 			Logger.w("MediaPlayer", "MeTube send failed for ${song.id}", e)

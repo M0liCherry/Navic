@@ -12,8 +12,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
+import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -43,6 +47,7 @@ fun SettingsInputItem(
 	onValidate: (String) -> Boolean = { true },
 	defaultValue: String,
 	enabled: Boolean = true,
+	password: Boolean = false,
 	shapes: ListItemShapes,
 	leadingContent: @Composable (() -> Unit)? = null,
 	supportingContent: @Composable (() -> Unit)? = null,
@@ -75,6 +80,16 @@ fun SettingsInputItem(
 						state = textFieldState,
 						modifier = Modifier.fillMaxWidth(),
 						isError = !inputValidated,
+						keyboardOptions = if (password) {
+							KeyboardOptions(keyboardType = KeyboardType.Password)
+						} else {
+							KeyboardOptions.Default
+						},
+						visualTransformation = if (password) {
+							PasswordVisualTransformation()
+						} else {
+							VisualTransformation.None
+						},
 						trailingIcon = if (!inputValidated) {
 							{
 								// why

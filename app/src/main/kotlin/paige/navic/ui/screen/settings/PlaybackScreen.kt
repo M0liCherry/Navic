@@ -207,16 +207,25 @@ fun SettingsPlaybackScreen() {
 						onCheckedChange = { preferenceManager.youtubeFallbackEnabled = it },
 						content = { Text(stringResource(R.string.option_youtube_fallback)) },
 						supportingContent = { Text(stringResource(R.string.subtitle_youtube_fallback)) },
-						shapes = SegmentedListItemDefaults.segmentedShapes(index = 0, count = 3)
+						shapes = SegmentedListItemDefaults.segmentedShapes(index = 0, count = 4)
 					)
 					SettingsInputItem(
-						value = preferenceManager.metubeUrl,
-						onValueChanged = { preferenceManager.metubeUrl = it.trim() },
+						value = preferenceManager.downloadPassword,
+						onValueChanged = { preferenceManager.downloadPassword = it },
+						defaultValue = "",
+						password = true,
+						content = { Text(stringResource(R.string.option_download_password)) },
+						supportingContent = { Text(stringResource(R.string.subtitle_download_password)) },
+						shapes = SegmentedListItemDefaults.segmentedShapes(index = 1, count = 4)
+					)
+					SettingsInputItem(
+						value = preferenceManager.customMetubeUrl,
+						onValueChanged = { preferenceManager.customMetubeUrl = it.trim() },
 						defaultValue = "",
 						onValidate = { it.isBlank() || it.startsWith("http") },
-						content = { Text(stringResource(R.string.option_metube_url)) },
-						supportingContent = { Text(stringResource(R.string.subtitle_metube_url)) },
-						shapes = SegmentedListItemDefaults.segmentedShapes(index = 1, count = 3)
+						content = { Text(stringResource(R.string.option_custom_metube_url)) },
+						supportingContent = { Text(stringResource(R.string.subtitle_custom_metube_url)) },
+						shapes = SegmentedListItemDefaults.segmentedShapes(index = 2, count = 4)
 					)
 					SettingsNavItem(
 						onClick = {
@@ -231,7 +240,7 @@ fun SettingsPlaybackScreen() {
 						},
 						content = { Text(if (metubeTesting) stringResource(R.string.info_metube_testing) else stringResource(R.string.action_test_metube)) },
 						supportingContent = { Text(metubeTestResult ?: stringResource(R.string.info_metube_not_tested)) },
-						shapes = SegmentedListItemDefaults.segmentedShapes(index = 2, count = 3)
+						shapes = SegmentedListItemDefaults.segmentedShapes(index = 3, count = 4)
 					)
 				}
 			}
