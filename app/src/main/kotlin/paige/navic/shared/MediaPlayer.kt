@@ -9,8 +9,7 @@ package paige.navic.shared
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.FlowPreview
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.MutableSharedFlowimport kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
@@ -30,6 +29,7 @@ import paige.navic.domain.model.settings.ExplicitContentPlayback
 import paige.navic.domain.repository.PlayerStateRepository
 import paige.navic.domain.repository.SongRepository
 import paige.navic.ui.core.PlayerUiState
+import kotlin.time.Clock
 import kotlin.time.Duration.Companion.seconds
 
 abstract class MediaPlayerViewModel(
@@ -45,7 +45,10 @@ abstract class MediaPlayerViewModel(
 	val uiState: StateFlow<PlayerUiState> = _uiState.asStateFlow()
 
 	sealed interface PlayerEvent {
-		data class PlaybackFailed(val message: String) : PlayerEvent
+		data class PlaybackFailed(
+			val message: String,
+			val atMs: Long = Clock.System.now().toEpochMilliseconds()
+		) : PlayerEvent
 	}
 
 	@Suppress("PropertyName")

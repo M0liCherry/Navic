@@ -81,8 +81,13 @@ fun NowPlayingScreen() {
 		player.events.collect { event ->
 			when (event) {
 				is MediaPlayerViewModel.PlayerEvent.PlaybackFailed -> {
-					eventScope.launch { snackBarState.showSnackbar(event.message) }
-					backStack.remove(Screen.NowPlaying)
+					// Drop stale errors: if the player screen wasn't open when
+					// it fired, acting on it later would kick the user out
+					// over nothing.
+					if (System.currentTimeMillis() - event.atMs < 10_000) {
+						eventScope.launch { snackBarState.showSnackbar(event.message) }
+						backStack.remove(Screen.NowPlaying)
+					}
 				}
 			}
 		}

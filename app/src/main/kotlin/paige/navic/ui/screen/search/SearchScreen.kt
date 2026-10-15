@@ -483,13 +483,7 @@ fun SearchScreen(
 									selected = artist == artistListSelection,
 									selectedArtistAlbums = artistListSelectionAlbums,
 									starred = artistListStarred,
-									onSelect = {
-									if (artist.id.startsWith("yt-")) {
-										// YouTube fallback entry: drill into their songs via a refined search
-										query.clearText()
-										query.edit { insert(0, artist.name) }
-									} else artistListViewModel.selectArtist(artist)
-								},
+									onSelect = { artistListViewModel.selectArtist(artist) },
 									onDeselect = { artistListViewModel.clearSelection() },
 									onSetStarred = { artistListViewModel.starArtist(it) },
 									onPlayNext = { artistListViewModel.playArtistAlbumsNext(player) },
