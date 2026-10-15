@@ -342,7 +342,9 @@ class YouTubeRepository(
 		val cached = albumCacheMutex.withLock { albumCache["$PREFIX-album-$browseId"] }
 		val artistName = cached?.artistName?.takeIf { it.isNotBlank() } ?: "Unknown artist"
 		val tracks = shelfRows.flatMap { shelf -> (shelf.arr("contents") ?: JsonArray(emptyList())) }.mapNotNull { el ->
-			val r = el as? JsonObject ?: return@mapNotNull null
+			val container = el as? JsonObject ?: return@mapNotNull null
+			// Shelf rows arrive wrapped; some are bare renderers.
+			val r = container.obj("musicResponsiveListItemRenderer") ?: container
 			val videoId = extractVideoId(r) ?: findVideoId(r) ?: return@mapNotNull null
 			val trackTitle = listItemTitle(r, 0).ifBlank { return@mapNotNull null }
 			DomainSong(
