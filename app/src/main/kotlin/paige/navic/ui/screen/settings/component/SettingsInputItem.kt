@@ -17,7 +17,6 @@ import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
@@ -55,8 +54,9 @@ fun SettingsInputItem(
 ) {
 	var inputDialogOpen by rememberSaveable { mutableStateOf(false) }
 	val textFieldState = rememberTextFieldState(initialText = value)
-	val inputValidated = remember(textFieldState.text) {
-		onValidate(textFieldState.text.toString())
+	var passwordText by rememberSaveable(value, inputDialogOpen) { mutableStateOf(value) }
+	val inputValidated = remember(textFieldState.text, passwordText, password) {
+		onValidate(if (password) passwordText else textFieldState.text.toString())
 	}
 
 	SettingsNavItem(
@@ -76,44 +76,65 @@ fun SettingsInputItem(
 				Column(
 					verticalArrangement = Arrangement.spacedBy(4.dp)
 				) {
-					OutlinedTextField(
-						state = textFieldState,
-						modifier = Modifier.fillMaxWidth(),
-						isError = !inputValidated,
-						keyboardOptions = if (password) {
-							KeyboardOptions(keyboardType = KeyboardType.Password)
-						} else {
-							KeyboardOptions.Default
-						},
-						visualTransformation = if (password) {
-							PasswordVisualTransformation()
-						} else {
-							VisualTransformation.None
-						},
-						trailingIcon = if (!inputValidated) {
-							{
-								// why
-								Box(
-									modifier = Modifier.width(55.dp),
-									contentAlignment = Alignment.Center
-								) {
-									Icon(
-										imageVector = Icons.Outlined.Error,
-										contentDescription = null
-									)
+					if (password) {
+						OutlinedTextField(
+							value = passwordText,
+							onValueChange = { passwordText = it },
+							modifier = Modifier.fillMaxWidth(),
+							isError = !inputValidated,
+							keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+							visualTransformation = PasswordVisualTransformation(),
+							trailingIcon = if (!inputValidated) {
+								{
+									// why
+									Box(
+										modifier = Modifier.width(55.dp),
+										contentAlignment = Alignment.Center
+									) {
+										Icon(
+											imageVector = Icons.Outlined.Error,
+											contentDescription = null
+										)
+									}
 								}
+							} else {
+								null
 							}
-						} else {
-							null
-						}
-					)
-					val resetEnabled = textFieldState.text.toString() != defaultValue
+						)
+					} else {
+						OutlinedTextField(
+							state = textFieldState,
+							modifier = Modifier.fillMaxWidth(),
+							isError = !inputValidated,
+							trailingIcon = if (!inputValidated) {
+								{
+									// why
+									Box(
+										modifier = Modifier.width(55.dp),
+										contentAlignment = Alignment.Center
+									) {
+										Icon(
+											imageVector = Icons.Outlined.Error,
+											contentDescription = null
+										)
+									}
+								}
+							} else {
+								null
+							}
+						)
+					}
+					val resetEnabled =
+						(if (password) passwordText else textFieldState.text.toString()) != defaultValue
 					Text(
 						text = stringResource(R.string.action_reset_to_default),
 						color = if (resetEnabled)
 							MaterialTheme.colorScheme.primary
 						else MaterialTheme.colorScheme.primary.copy(alpha = .5f),
 						modifier = Modifier.clickable(enabled = resetEnabled) {
+							if (password) {
+								passwordText = defaultValue
+							}
 							textFieldState.setTextAndPlaceCursorAtEnd(defaultValue)
 						}
 					)
@@ -128,7 +149,7 @@ fun SettingsInputItem(
 				Button(
 					onClick = {
 						inputDialogOpen = false
-						onValueChanged(textFieldState.text.toString())
+						onValueChanged(if (password) passwordText else textFieldState.text.toString())
 					},
 					enabled = inputValidated
 				) {

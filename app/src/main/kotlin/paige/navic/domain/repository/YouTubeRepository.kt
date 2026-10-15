@@ -31,7 +31,6 @@ import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
 import kotlinx.serialization.json.jsonPrimitive
 import com.russhwolf.settings.Settings
-import com.russhwolf.settings.getString
 import paige.navic.domain.manager.PreferenceManager
 import paige.navic.domain.model.DomainAlbum
 import paige.navic.domain.model.DomainExplicitStatus
