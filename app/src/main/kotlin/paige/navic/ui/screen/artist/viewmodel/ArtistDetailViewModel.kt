@@ -35,6 +35,7 @@ import paige.navic.domain.repository.AlbumRepository
 import paige.navic.domain.repository.ArtistRepository
 import paige.navic.domain.repository.DbRepository
 import paige.navic.domain.repository.SongRepository
+import paige.navic.domain.repository.YouTubeRepository
 import paige.navic.shared.MediaPlayerViewModel
 import paige.navic.ui.core.UiState
 import paige.navic.util.Logger
@@ -101,6 +102,10 @@ class ArtistDetailViewModel(
 	private fun loadArtistData() {
 		viewModelScope.launch {
 			try {
+				if (artistId.startsWith(YouTubeRepository.PREFIX)) {
+					artistState.value = UiState.Error(Exception("Not a library artist"))
+					return@launch
+				}
 				val artistEntity = artistDao.getArtistById(artistId)
 					?: throw Exception("Artist not found in database")
 				val domainArtist = artistEntity.toDomainModel()

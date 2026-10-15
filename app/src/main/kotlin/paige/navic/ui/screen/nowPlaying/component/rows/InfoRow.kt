@@ -97,7 +97,7 @@ fun NowPlayingInfoRow(
 				modifier = Modifier.clickable(
 					song != null,
 					onClick = dropUnlessResumed {
-						song?.artistId?.let { id ->
+						song?.artistId?.takeIf { !it.startsWith("yt-") }?.let { id ->
 							backStack.remove(Screen.NowPlaying)
 							backStack.add(Screen.ArtistDetail(id))
 						}
@@ -113,8 +113,10 @@ fun NowPlayingInfoRow(
 						appendArtists(
 							artists = song.artists,
 							onClick = {
-								backStack.remove(Screen.NowPlaying)
-								backStack.add(Screen.ArtistDetail(it))
+								if (!it.startsWith("yt-")) {
+									backStack.remove(Screen.NowPlaying)
+									backStack.add(Screen.ArtistDetail(it))
+								}
 							}
 						)
 					} else {

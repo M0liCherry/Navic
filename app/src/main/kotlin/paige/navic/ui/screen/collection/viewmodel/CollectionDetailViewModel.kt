@@ -50,7 +50,10 @@ class CollectionDetailViewModel(
 
 	val collectionState: StateFlow<UiState<DomainSongCollection>>
 		field = MutableStateFlow(
-			runBlocking {
+			// YouTube fallback ids are not in the local DB; resolve them
+			// through the network path instead of crashing here.
+			if (collectionId.startsWith(YouTubeRepository.PREFIX)) UiState.Loading<DomainSongCollection>()
+			else runBlocking {
 				try {
 					val data = repository.getLocalData(collectionId)
 					if (data.songs.isEmpty()) UiState.Loading(data) else UiState.Success(data)
@@ -114,7 +117,7 @@ class CollectionDetailViewModel(
 	}
 
 	fun refreshCollection(fullRefresh: Boolean) {
-		if (collectionId.startsWith("${YouTubeRepository.PREFIX}album-")) {
+		if (collectionId.startsWith(YouTubeRepository.PREFIX)) {
 			refreshYouTubeAlbum()
 			return
 		}
@@ -144,7 +147,9 @@ class CollectionDetailViewModel(
 		viewModelScope.launch {
 			collectionState.value = UiState.Loading(collectionState.value.data)
 			try {
-				val browseId = collectionId.removePrefix("${YouTubeRepository.PREFIX}album-")
+				val browseId = collectionId
+					.removePrefix(YouTubeRepository.PREFIX)
+					.removePrefix("album-")
 				val ytAlbum = youTubeRepository.getAlbum(browseId)
 				val serverSongs = findServerAlbumSongs(
 					artist = ytAlbum.artistName,
@@ -190,7 +195,7 @@ class CollectionDetailViewModel(
 		s.lowercase()
 			.replace(Regex("""\([^)]*\)"""), " ")
 			.replace(Regex("""\[[^]]*]"""), " ")
-			.replace(Regex("""[^a-z0-9]+"""), " ")
+			.replace(Regex("""[^\p{L}\p{N}]+"""), " ")
 			.replace(Regex("""\s+"""), " ")
 			.trim()
 

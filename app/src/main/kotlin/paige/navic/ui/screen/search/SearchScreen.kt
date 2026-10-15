@@ -344,11 +344,16 @@ fun SearchScreen(
 														buildSongInfoString(
 															song = song,
 															onClickArtist = {
-																backStack.add(
-																	Screen.ArtistDetail(
-																		it
+																if (it.startsWith("yt-")) {
+																	query.clearText()
+																	query.edit { insert(0, song.artistName ?: "") }
+																} else {
+																	backStack.add(
+																		Screen.ArtistDetail(
+																			it
+																		)
 																	)
-																)
+																}
 															}
 														)
 													)

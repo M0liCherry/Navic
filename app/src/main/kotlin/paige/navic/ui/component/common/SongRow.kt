@@ -122,7 +122,7 @@ fun SongRow(
 				MarqueeText(
 					buildSongInfoString(
 						song = song,
-						onClickArtist = { backStack.add(Screen.ArtistDetail(it)) },
+						onClickArtist = { if (!it.startsWith("yt-")) backStack.add(Screen.ArtistDetail(it)) },
 						showPlayCount = true
 					)
 				)

@@ -33,7 +33,7 @@ class CollectionRepository(
 	suspend fun getLocalData(collectionId: String): DomainSongCollection {
 		return albumDao.getAlbumById(collectionId)?.toDomainModel()
 			?: playlistDao.getPlaylistById(collectionId)?.toDomainModel()
-			?: throw Error("Collection ID $collectionId is neither a known album or playlist")
+			?: throw IllegalArgumentException("Collection ID $collectionId is neither a known album or playlist")
 	}
 
 	private suspend fun refreshLocalData(collectionId: String): DomainSongCollection {

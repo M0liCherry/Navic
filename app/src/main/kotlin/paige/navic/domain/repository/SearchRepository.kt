@@ -229,7 +229,7 @@ class SearchRepository(
 		s.lowercase()
 			.replace(Regex("""\([^)]*\)"""), " ")
 			.replace(Regex("""\[[^]]*]"""), " ")
-			.replace(Regex("""[^a-z0-9]+"""), " ")
+			.replace(Regex("""[^\p{L}\p{N}]+"""), " ")
 			.split(" ")
 			.filter { it.isNotBlank() && it !in NOISE_TOKENS }
 			.joinToString(" ")
