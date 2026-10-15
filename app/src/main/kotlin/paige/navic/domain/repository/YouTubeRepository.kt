@@ -345,6 +345,7 @@ class YouTubeRepository(
 			val container = el as? JsonObject ?: return@mapNotNull null
 			// Shelf rows arrive wrapped; some are bare renderers.
 			val r = container.obj("musicResponsiveListItemRenderer") ?: container
+			if (isVideoRowText(listItemTitle(r, 1))) return@mapNotNull null
 			val videoId = extractVideoId(r) ?: findVideoId(r) ?: return@mapNotNull null
 			val trackTitle = listItemTitle(r, 0).ifBlank { return@mapNotNull null }
 			DomainSong(
@@ -417,6 +418,13 @@ class YouTubeRepository(
 		get(key) as? kotlinx.serialization.json.JsonArray
 	private fun kotlinx.serialization.json.JsonObject.str(key: String): String? =
 		(get(key) as? kotlinx.serialization.json.JsonPrimitive)?.contentOrNull
+
+	/**
+	 * True for music *video* rows. Songs expose play counts ("536M plays")
+	 * while videos expose view counts ("386M views") in the same column.
+	 */
+	private fun isVideoRowText(text: String): Boolean =
+		text.contains(Regex("(?i)\\bviews?\\b|\\bwatching\\b"))
 
 	private fun listItemTitle(r: JsonObject, column: Int): String {
 		val runs = (flexColumns(r).getOrNull(column) as? JsonObject)
@@ -511,6 +519,7 @@ class YouTubeRepository(
 					val parts = secondRuns.mapNotNull {
 						(it as? JsonObject)?.str("text")
 					}.filter { it != " • " && it != " · " }.map { it.trim() }
+					if (parts.any { isVideoRowText(it) }) continue
 					// Typical songs-filter shape: [artist, album, duration]
 					// e.g. ["Kanye West", "808s & Heartbreak", "3:24"]
 					artist = parts.getOrNull(0)
