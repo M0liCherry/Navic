@@ -159,8 +159,10 @@ fun SongSheet(
 						buildSongInfoString(
 							song = song,
 							onClickArtist = {
-								onDismissRequest()
-								backStack.add(Screen.ArtistDetail(it))
+								if (!it.startsWith("yt-")) {
+									onDismissRequest()
+									backStack.add(Screen.ArtistDetail(it))
+								}
 							}
 						)
 					)

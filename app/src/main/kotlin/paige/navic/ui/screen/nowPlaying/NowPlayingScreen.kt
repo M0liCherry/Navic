@@ -21,6 +21,7 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
@@ -37,6 +38,7 @@ import org.koin.core.parameter.parametersOf
 import paige.navic.R
 import paige.navic.di.LocalNavStack
 import paige.navic.di.LocalSheetState
+import paige.navic.di.LocalSnackBarState
 import paige.navic.domain.manager.PreferenceManager
 import paige.navic.domain.model.settings.NowPlayingBackgroundStyle
 import paige.navic.domain.model.settings.ToolbarPosition
@@ -70,6 +72,26 @@ fun NowPlayingScreen() {
 
 	val playerState by player.uiState.collectAsStateWithLifecycle()
 	val song = playerState.currentSong
+
+	// YouTube fallback failures: show the error and leave the player,
+	// revealing whatever was underneath (e.g. search).
+	val snackBarState = LocalSnackBarState.current
+	val eventScope = rememberCoroutineScope()
+	LaunchedEffect(Unit) {
+		player.events.collect { event ->
+			when (event) {
+				is MediaPlayerViewModel.PlayerEvent.PlaybackFailed -> {
+					// Drop stale errors: if the player screen wasn't open when
+					// it fired, acting on it later would kick the user out
+					// over nothing.
+					if (System.currentTimeMillis() - event.atMs < 10_000) {
+						eventScope.launch { snackBarState.showSnackbar(event.message) }
+						backStack.remove(Screen.NowPlaying)
+					}
+				}
+			}
+		}
+	}
 
 	val viewModel = koinViewModel<NowPlayingViewModel> { parametersOf(player) }
 	val songIsStarred by viewModel.songIsStarred.collectAsStateWithLifecycle()

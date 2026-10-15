@@ -13,6 +13,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import paige.navic.data.database.entity.SyncActionType
+import paige.navic.domain.repository.YouTubeRepository
 import kotlin.time.Clock
 import kotlin.time.Duration.Companion.seconds
 
@@ -98,6 +99,9 @@ class ScrobbleManager(
 
 	private fun scrobbleSubmission(songId: String?) {
 		if (!preferenceManager.enableScrobbling || songId == null) return
+		// YouTube fallback ids are unknown to the server; queuing them would
+		// fail and block every legit sync action behind them.
+		if (YouTubeRepository.isYouTubeSongId(songId)) return
 
 		scope.launch(Dispatchers.IO) {
 			val currentTime = Clock.System.now()
@@ -116,6 +120,7 @@ class ScrobbleManager(
 
 	private fun scrobbleNowPlaying(songId: String?) {
 		if (!preferenceManager.enableScrobbling || songId == null) return
+		if (YouTubeRepository.isYouTubeSongId(songId)) return
 
 		if (!connectivityManager.isOnline.value) return
 

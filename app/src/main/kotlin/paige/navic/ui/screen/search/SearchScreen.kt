@@ -14,6 +14,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -73,6 +74,7 @@ import paige.navic.domain.model.settings.ExplicitContentPlayback
 import paige.navic.domain.model.settings.ListViewMode
 import paige.navic.ui.icons.Icons
 import paige.navic.ui.icons.outlined.Close
+import paige.navic.ui.icons.outlined.Download
 import paige.navic.ui.icons.outlined.History
 import paige.navic.ui.icons.outlined.Lock
 import paige.navic.ui.icons.outlined.Offline
@@ -236,22 +238,44 @@ fun SearchScreen(
 						verticalArrangement = Arrangement.spacedBy(8.dp)
 					) {
 						if (query.text.isNotBlank()) {
-							if (songs.isNotEmpty()) {
+							val serverSongs = songs.filter { !it.id.startsWith("yt-") }.take(10)
+							val ytSongs = songs.filter { it.id.startsWith("yt-") }.take(10)
+							val songSections = buildList {
+								if (serverSongs.isNotEmpty()) add(R.string.title_songs to serverSongs)
+								if (ytSongs.isNotEmpty()) add(R.string.title_youtube to ytSongs)
+							}
+							songSections.forEach { (titleRes, sectionSongs) ->
+								val isYouTubeSection = titleRes == R.string.title_youtube
 								item(span = { GridItemSpan(maxLineSpan) }) {
-									Text(
-										if (songs.any { it.id.startsWith("yt-") } && songs.none { !it.id.startsWith("yt-") }) stringResource(R.string.title_youtube) else stringResource(R.string.title_songs),
-										style = MaterialTheme.typography.headlineSmall,
+									Row(
 										modifier = Modifier.padding(
 											horizontal = 16.dp,
 											vertical = 8.dp
+										),
+										verticalAlignment = Alignment.CenterVertically
+									) {
+										Text(
+											stringResource(titleRes),
+											style = MaterialTheme.typography.headlineSmall,
+											modifier = Modifier.weight(1f)
 										)
-									)
+										if (isYouTubeSection) {
+											IconButton(onClick = {
+												sectionSongs.forEach { downloadManager.downloadSong(it) }
+											}) {
+												Icon(
+													Icons.Outlined.Download,
+													contentDescription = stringResource(R.string.action_download)
+												)
+											}
+										}
+									}
 								}
 								items(
-									songs.take(10).size,
+									sectionSongs.size,
 									span = { GridItemSpan(maxLineSpan) }
 								) { index ->
-									val song = songs[index]
+									val song = sectionSongs[index]
 									val isYt = song.id.startsWith("yt-")
 									val isDownloaded = downloadedSongs.containsKey(song.id)
 
@@ -320,11 +344,16 @@ fun SearchScreen(
 														buildSongInfoString(
 															song = song,
 															onClickArtist = {
-																backStack.add(
-																	Screen.ArtistDetail(
-																		it
+																if (it.startsWith("yt-")) {
+																	query.clearText()
+																	query.edit { insert(0, song.artistName ?: "") }
+																} else {
+																	backStack.add(
+																		Screen.ArtistDetail(
+																			it
+																		)
 																	)
-																)
+																}
 															}
 														)
 													)
@@ -422,7 +451,13 @@ fun SearchScreen(
 									album = album,
 									selected = album == albumListSelection,
 									starred = albumListStarred,
-									onSelect = { albumListViewModel.selectAlbum(album) },
+									onSelect = {
+									if (album.id.startsWith("yt-")) {
+										// YouTube fallback entry: drill into its songs via a refined search
+										query.clearText()
+										query.edit { insert(0, listOfNotNull(album.artistName, album.name).joinToString(" ")) }
+									} else albumListViewModel.selectAlbum(album)
+								},
 									onDeselect = { albumListViewModel.clearSelection() },
 									onSetStarred = { albumListViewModel.starAlbum(it) },
 									onSetShareId = { },

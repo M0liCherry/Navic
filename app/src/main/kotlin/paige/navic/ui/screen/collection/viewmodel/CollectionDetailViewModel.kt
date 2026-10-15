@@ -19,6 +19,7 @@ import kotlinx.coroutines.runBlocking
 import paige.navic.R
 import paige.navic.data.database.entity.DownloadStatus
 import paige.navic.data.database.mapper.toDomainModel
+import paige.navic.data.database.mapper.toEntity
 import paige.navic.domain.manager.ConnectivityManager
 import paige.navic.domain.manager.DownloadManager
 import paige.navic.domain.manager.SessionManager
@@ -30,8 +31,10 @@ import paige.navic.domain.model.DomainSongCollection
 import paige.navic.domain.repository.AlbumRepository
 import paige.navic.domain.repository.CollectionRepository
 import paige.navic.domain.repository.SongRepository
+import paige.navic.domain.repository.YouTubeRepository
 import paige.navic.ui.core.UiState
 import paige.navic.util.Logger
+import kotlin.time.Duration
 
 class CollectionDetailViewModel(
 	private val collectionId: String,
@@ -41,12 +44,16 @@ class CollectionDetailViewModel(
 	private val downloadManager: DownloadManager,
 	private val sessionManager: SessionManager,
 	private val snackBarManager: SnackBarManager,
+	private val youTubeRepository: YouTubeRepository,
 	connectivityManager: ConnectivityManager
 ) : ViewModel() {
 
 	val collectionState: StateFlow<UiState<DomainSongCollection>>
 		field = MutableStateFlow(
-			runBlocking {
+			// YouTube fallback ids are not in the local DB; resolve them
+			// through the network path instead of crashing here.
+			if (collectionId.startsWith(YouTubeRepository.PREFIX)) UiState.Loading<DomainSongCollection>()
+			else runBlocking {
 				try {
 					val data = repository.getLocalData(collectionId)
 					if (data.songs.isEmpty()) UiState.Loading(data) else UiState.Success(data)
@@ -110,6 +117,10 @@ class CollectionDetailViewModel(
 	}
 
 	fun refreshCollection(fullRefresh: Boolean) {
+		if (collectionId.startsWith(YouTubeRepository.PREFIX)) {
+			refreshYouTubeAlbum()
+			return
+		}
 		viewModelScope.launch {
 			repository.getCollectionFlow(fullRefresh, collectionId).collect {
 				collectionState.value = it
@@ -126,6 +137,73 @@ class CollectionDetailViewModel(
 			}
 		}
 	}
+
+	/**
+	 * YouTube fallback album page: your library songs from that album first,
+	 * then the remaining YouTube tracks (each downloadable). No server calls
+	 * with the fake id are made anywhere on this path.
+	 */
+	private fun refreshYouTubeAlbum() {
+		viewModelScope.launch {
+			collectionState.value = UiState.Loading(collectionState.value.data)
+			try {
+				// Tolerant: recover MPREb_… from well-formed and
+				// historically-mangled (double-prefixed) ids alike.
+				val rawId = collectionId
+					.removePrefix(YouTubeRepository.PREFIX)
+					.trimStart('-')
+					.removePrefix("album-")
+				val browseId = rawId
+					.takeIf { it.matches(Regex("MPREb_[A-Za-z0-9_-]+")) }
+					?: throw IllegalArgumentException("Not a YouTube album: $collectionId")
+				val ytAlbum = youTubeRepository.getAlbum(browseId)
+				val serverSongs = findServerAlbumSongs(
+					artist = ytAlbum.artistName,
+					album = ytAlbum.name
+				)
+				val serverTitles = serverSongs.map { normalizeTitle(it.title) }.toSet()
+				val external = ytAlbum.songs.filter { track ->
+					serverTitles.none { it.isNotEmpty() && it == normalizeTitle(track.title) }
+				}
+				val merged = serverSongs + external
+				collectionState.value = UiState.Success(
+					ytAlbum.copy(
+						songs = merged,
+						songCount = merged.size,
+						duration = merged.fold(Duration.ZERO) { acc, song -> acc + song.duration }
+					)
+				)
+			} catch (e: Exception) {
+				Logger.e("CollectionDetailViewModel", "Failed to load YouTube album $collectionId", e)
+				collectionState.value = UiState.Error(e, collectionState.value.data)
+			}
+		}
+	}
+
+	private suspend fun findServerAlbumSongs(artist: String?, album: String?): List<DomainSong> {
+		if (album.isNullOrBlank()) return emptyList()
+		return try {
+			val query = listOfNotNull(
+				artist?.takeIf { it.isNotBlank() && it != "Unknown artist" },
+				album
+			).joinToString(" ")
+			val wanted = normalizeTitle(album)
+			sessionManager.api.searchID3(query).songs
+				.filter { normalizeTitle(it.albumTitle.orEmpty()) == wanted }
+				.map { it.toEntity().toDomainModel() }
+		} catch (e: Exception) {
+			Logger.w("CollectionDetailViewModel", "server album match failed", e)
+			emptyList()
+		}
+	}
+
+	private fun normalizeTitle(s: String): String =
+		s.lowercase()
+			.replace(Regex("""\([^)]*\)"""), " ")
+			.replace(Regex("""\[[^]]*]"""), " ")
+			.replace(Regex("""[^\p{L}\p{N}]+"""), " ")
+			.replace(Regex("""\s+"""), " ")
+			.trim()
 
 	fun selectSong(song: DomainSong) {
 		viewModelScope.launch {
@@ -175,6 +253,7 @@ class CollectionDetailViewModel(
 	fun starSelectedSong() {
 		viewModelScope.launch {
 			val selection = selectedSong.value ?: return@launch
+			if (selection.id.startsWith(YouTubeRepository.PREFIX)) return@launch
 			runCatching {
 				songRepository.starSong(selection)
 				selectedSongIsStarred.value = true
@@ -186,6 +265,7 @@ class CollectionDetailViewModel(
 	fun unstarSelectedSong() {
 		viewModelScope.launch {
 			val selection = selectedSong.value ?: return@launch
+			if (selection.id.startsWith(YouTubeRepository.PREFIX)) return@launch
 			runCatching {
 				songRepository.unstarSong(selection)
 				selectedSongIsStarred.value = false
@@ -197,6 +277,7 @@ class CollectionDetailViewModel(
 	fun rateSelectedSong(rating: Int) {
 		viewModelScope.launch {
 			val selection = selectedSong.value ?: return@launch
+			if (selection.id.startsWith(YouTubeRepository.PREFIX)) return@launch
 			runCatching {
 				songRepository.rateSong(selection, rating)
 				_selectedSongRating.value = rating
@@ -206,10 +287,10 @@ class CollectionDetailViewModel(
 
 	fun rateAlbum(newRating: Int) {
 		viewModelScope.launch {
-			(collectionState.value.data as? DomainAlbum)?.let { album ->
-				albumRepository.rateAlbum(album, newRating)
-				rating.value = newRating
-			}
+			val album = (collectionState.value.data as? DomainAlbum) ?: return@launch
+			if (album.id.startsWith(YouTubeRepository.PREFIX)) return@launch
+			albumRepository.rateAlbum(album, newRating)
+			rating.value = newRating
 		}
 	}
 
@@ -218,6 +299,7 @@ class CollectionDetailViewModel(
 			runCatching {
 				val collection = collectionState.value.data ?: return@launch
 				if (collection !is DomainAlbum) return@launch
+				if (collection.id.startsWith(YouTubeRepository.PREFIX)) return@launch
 				if (starred) {
 					albumRepository.starAlbum(collection)
 				} else {

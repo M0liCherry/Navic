@@ -8,6 +8,7 @@ package paige.navic.domain.manager
 
 import com.materialkolor.PaletteStyle
 import com.materialkolor.dynamiccolor.ColorSpec
+import com.russhwolf.settings.set
 import paige.navic.discord.ExoDiscordIntegration
 import paige.navic.domain.manager.base.BasePreferenceManager
 import paige.navic.domain.model.DomainAlbumListType
@@ -170,8 +171,21 @@ class PreferenceManager(
 	// YouTube fallback search (YouTube Music songs only, not videos)
 	var youtubeFallbackEnabled by preference(true)
 	var youtubeMaxResults by preference(8)
-	// Optional MeTube instance on the server (e.g. http://server:8081).
-	// When set, downloads of YouTube fallback songs are sent to MeTube
-	// so the server fetches them instead of the phone.
-	var metubeUrl by preference("")
+	// Password for MeTube downloads (HTTP Basic user "downloader").
+	// Stored alongside the other server credentials. Never logged.
+	var downloadPassword by preference("")
+	// Optional manual MeTube root for servers that don't serve MeTube at
+	// <server>/metube. Empty by default: the address is derived, and the
+	// legacy stored host (if any) is migrated here once, then deleted.
+	var customMetubeUrl by preference("")
+
+	init {
+		val legacy = settings.getStringOrNull("metubeUrl")?.trim().orEmpty()
+		if (legacy.isNotBlank()) {
+			if (settings.getStringOrNull("customMetubeUrl").isNullOrBlank()) {
+				settings["customMetubeUrl"] = legacy
+			}
+			settings["metubeUrl"] = null
+		}
+	}
 }
