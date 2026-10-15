@@ -496,7 +496,7 @@
 	<string name="info_no_search_results">No results</string>
 	<string name="title_youtube">YouTube</string>
 	<string name="option_youtube_fallback">YouTube fallback search</string>
-	<string name="subtitle_youtube_fallback">When your server has no matching songs, show matching YouTube Music songs as regular entries. Tapping one plays its audio.</string>
+	<string name="subtitle_youtube_fallback">When your server has no matching songs, show matching YouTube Music songs as regular entries. Tapping one sends it to MeTube and plays it once it is in your library.</string>
 	<string name="option_metube_url">MeTube URL</string>
 	<string name="subtitle_metube_url">Optional MeTube instance on your server (e.g. http://server:8081). YouTube downloads are sent to MeTube so the server fetches them.</string>
 	<string name="option_download_password">Download password</string>

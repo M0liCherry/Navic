@@ -143,33 +143,6 @@ class AndroidMediaPlayerViewModel(
 					checkAndAutoFillQueue()
 				}
 
-				override fun onPlayerError(error: PlaybackException) {
-					val current = _uiState.value.currentSong
-					if (current != null && YouTubeRepository.isYouTubeSong(current)) {
-						if (ytMetubeOk.contains(current.id) || ytMatchJobs.containsKey(current.id)) {
-							// A server copy is (or may be) on its way: stay open
-							// and try a fresh stream once instead of failing.
-							Logger.i("MediaPlayer", "YouTube stream errored for ${current.id}, retrying (MeTube pending)")
-							launchInView {
-								val fresh = resolveSongForPlayback(current)
-								if (fresh != null && _uiState.value.currentSong?.id == current.id) {
-									controller?.let { p ->
-										val idx = _uiState.value.currentIndex
-										if (idx in 0 until p.mediaItemCount) {
-											p.replaceMediaItem(idx, withContext(Dispatchers.Default) { fresh.toMediaItem() })
-											p.seekTo(idx, 0L)
-											p.prepare()
-											p.play()
-										}
-									}
-								}
-							}
-						} else {
-							Logger.w("MediaPlayer", "YouTube stream failed for ${current.id}", error)
-							failPlayback("Couldn't play this YouTube song.")
-						}
-					}
-				}
 
 				override fun onIsPlayingChanged(isPlaying: Boolean) {
 					if (isPlaying) startProgressLoop()
@@ -400,6 +373,7 @@ class AndroidMediaPlayerViewModel(
 		if (!state.isPaused) {
 			player.play()
 		}
+		resolvedQueue.filter { YouTubeRepository.isYouTubeSong(it) }.forEach { watchForLibraryMatch(it) }
 	}
 
 	private fun startProgressLoop() = launchInView {
@@ -447,8 +421,14 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun addToQueueSingle(song: DomainSong, notify: Boolean) = launchInView {
+		if (YouTubeRepository.isYouTubeSong(song)) {
+			if (sendToMeTubeNow(song)) {
+				watchForLibraryArrival(song)
+				snackBarManager.notify(R.string.notice_download_started)
+			}
+			return@launchInView
+		}
 		val resolved = resolveSongForPlayback(song) ?: return@launchInView
-		if (YouTubeRepository.isYouTubeSong(resolved)) sendYouTubeToMeTube(resolved)
 		controller?.addMediaItem(withContext(Dispatchers.Default) { resolved.toMediaItem() })
 		_uiState.update { state ->
 			val newQueue = state.queue + resolved
@@ -474,17 +454,20 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun addToQueue(songs: List<DomainSong>, notify: Boolean) = launchInView {
-		val resolvedSongs = withContext(Dispatchers.IO) { songs.mapNotNull { resolveSongForPlayback(it) } }
-		if (resolvedSongs.isEmpty()) return@launchInView
-		resolvedSongs.filter { YouTubeRepository.isYouTubeSong(it) }.forEach { sendYouTubeToMeTube(it) }
-		val items = withContext(Dispatchers.Default) { resolvedSongs.map { it.toMediaItem() } }
+		val (ytSongs, ready) = songs.partition { YouTubeRepository.isYouTubeSong(it) }
+		ytSongs.forEach { if (sendToMeTubeNow(it)) watchForLibraryArrival(it) }
+		if (ready.isEmpty()) {
+			if (ytSongs.isNotEmpty()) snackBarManager.notify(R.string.notice_download_started)
+			return@launchInView
+		}
+		val items = withContext(Dispatchers.Default) { ready.map { it.toMediaItem() } }
 		controller?.addMediaItems(items)
 		_uiState.update { state ->
-			val newQueue = state.queue + resolvedSongs
+			val newQueue = state.queue + ready
 			state.copy(
 				queue = newQueue,
 				currentIndex = if (state.currentIndex == -1) 0 else state.currentIndex,
-				currentSong = if (state.currentIndex == -1) resolvedSongs.firstOrNull() else state.currentSong
+				currentSong = if (state.currentIndex == -1) ready.firstOrNull() else state.currentSong
 			)
 		}
 		if (notify) snackBarManager.notifyAddedToQueue()
@@ -553,15 +536,18 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun playNextSingle(song: DomainSong) = launchInView {
-		val resolved = resolveSongForPlayback(song) ?: run {
-			notifyEvent(PlayerEvent.PlaybackFailed("Couldn't load this YouTube song."))
+		if (YouTubeRepository.isYouTubeSong(song)) {
+			if (sendToMeTubeNow(song)) {
+				watchForLibraryArrival(song)
+				snackBarManager.notify(R.string.notice_download_started)
+			}
 			return@launchInView
 		}
+		val resolved = resolveSongForPlayback(song) ?: return@launchInView
 		controller?.addMediaItem(
 			_uiState.value.currentIndex + 1,
             withContext(Dispatchers.Default) { resolved.toMediaItem() }
 		)
-		if (YouTubeRepository.isYouTubeSong(resolved)) sendYouTubeToMeTube(resolved)
 		_uiState.update { state ->
 			val newQueue =
 				if (state.queue.isEmpty())
@@ -581,23 +567,26 @@ class AndroidMediaPlayerViewModel(
 		val sorted = if (collection is DomainAlbum) collection.songs.sortedWith(
 			compareBy({ it.discNumber }, { it.trackNumber })
 		) else collection.songs
-		val newCollection = withContext(Dispatchers.IO) { sorted.mapNotNull { resolveSongForPlayback(it) } }
-		if (newCollection.isEmpty()) return@launchInView
-		newCollection.filter { YouTubeRepository.isYouTubeSong(it) }.forEach { sendYouTubeToMeTube(it) }
-		val items = withContext(Dispatchers.Default) { newCollection.map { it.toMediaItem() } }
+		val (ytSongs, ready) = sorted.partition { YouTubeRepository.isYouTubeSong(it) }
+		ytSongs.forEach { if (sendToMeTubeNow(it)) watchForLibraryArrival(it) }
+		if (ready.isEmpty()) {
+			if (ytSongs.isNotEmpty()) snackBarManager.notify(R.string.notice_download_started)
+			return@launchInView
+		}
+		val items = withContext(Dispatchers.Default) { ready.map { it.toMediaItem() } }
 		controller?.addMediaItems(_uiState.value.currentIndex + 1, items)
 		_uiState.update { state ->
 			val newQueue =
 				if (state.queue.isEmpty())
-					state.queue + newCollection
+					state.queue + ready
 				else
-					state.queue.slice(0..state.currentIndex) + newCollection + state.queue.slice(
+					state.queue.slice(0..state.currentIndex) + ready + state.queue.slice(
 						state.currentIndex + 1..<state.queue.size
 					)
 			state.copy(
 				queue = newQueue,
 				currentIndex = if (state.currentIndex == -1) 0 else state.currentIndex,
-				currentSong = if (state.currentIndex == -1) newCollection.firstOrNull() else state.currentSong
+				currentSong = if (state.currentIndex == -1) ready.firstOrNull() else state.currentSong
 			)
 		}
 		snackBarManager.notifyPlayNext()
@@ -678,14 +667,13 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	override fun shufflePlay(collection: DomainSongCollection) = launchInView {
-		val shuffledSongs = withContext(Dispatchers.IO) {
-			collection.songs.shuffled().mapNotNull { resolveSongForPlayback(it) }
-		}
-		if (shuffledSongs.isEmpty()) {
-			failPlayback("Couldn't load this YouTube song.")
+		val (ytSongs, readyAll) = collection.songs.partition { YouTubeRepository.isYouTubeSong(it) }
+		ytSongs.forEach { if (sendToMeTubeNow(it)) watchForLibraryArrival(it) }
+		if (readyAll.isEmpty()) {
+			if (ytSongs.isNotEmpty()) snackBarManager.notify(R.string.notice_download_started)
 			return@launchInView
 		}
-		shuffledSongs.filter { YouTubeRepository.isYouTubeSong(it) }.forEach { sendYouTubeToMeTube(it) }
+		val shuffledSongs = readyAll.shuffled()
 		val mediaItems = withContext(Dispatchers.Default) {
 			shuffledSongs.map { it.toMediaItem() }
 		}
@@ -776,46 +764,37 @@ class AndroidMediaPlayerViewModel(
 	 * MeTube instance, so tapping a fallback entry both streams instantly
 	 * and fetches the file server-side. Never blocks or breaks playback.
 	 */
-	private val ytMetubeOk = mutableSetOf<String>()
-
-	private suspend fun resolveWithRetry(song: DomainSong, attempts: Int = 3): DomainSong? {
-		repeat(attempts) { i ->
-			resolveSongForPlayback(song)?.let { return it }
-			if (i < attempts - 1) delay(1500L * (i + 1))
-		}
-		return null
-	}
-
-	private fun sendYouTubeToMeTube(song: DomainSong) = launchInView {
-		sendToMeTubeNow(song)
-	}
+	private val ytPending = mutableSetOf<String>()
 
 	private suspend fun sendToMeTubeNow(song: DomainSong): Boolean {
 		if (!YouTubeRepository.isYouTubeSong(song)) return false
 		if (youTubeRepository.effectiveMetubeBase().isBlank()) return false
+		// Never queue the same song twice server-side.
+		if (!ytPending.add(song.id)) return true
 		return try {
 			val watchUrl = song.filePath?.takeIf { it.contains("watch?v=") }
 				?: YouTubeRepository.watchUrl(YouTubeRepository.videoIdOf(song))
 			when (withContext(Dispatchers.IO) { youTubeRepository.sendToMeTube(watchUrl) }) {
 				YouTubeRepository.MeTubeSendResult.Ok -> {
 					Logger.i("MediaPlayer", "sent ${song.id} to MeTube")
-					ytMetubeOk.add(song.id)
-					watchForLibraryMatch(song)
 					true
 				}
 				YouTubeRepository.MeTubeSendResult.WrongPassword -> {
 					Logger.w("MediaPlayer", "MeTube rejected credentials for ${song.id}")
 					snackBarManager.notify(R.string.info_wrong_download_password)
+					ytPending.remove(song.id)
 					false
 				}
 				YouTubeRepository.MeTubeSendResult.Failed -> {
 					Logger.w("MediaPlayer", "MeTube send failed for ${song.id}")
+					ytPending.remove(song.id)
 					false
 				}
 			}
 		} catch (e: Exception) {
 			if (e is kotlinx.coroutines.CancellationException) throw e
 			Logger.w("MediaPlayer", "MeTube send failed for ${song.id}", e)
+			ytPending.remove(song.id)
 			false
 		}
 	}
@@ -862,7 +841,68 @@ class AndroidMediaPlayerViewModel(
 				Logger.w("MediaPlayer", "library match watch failed for ${ytSong.id}", e)
 			} finally {
 				ytMatchJobs.remove(ytSong.id)
+				ytPending.remove(ytSong.id)
 			}
+		}
+	}
+
+	/**
+	 * Background arrivals (queue/album/shuffle adds): the song was never
+	 * queued, so on match it is appended — and starts playing if nothing
+	 * else is. Queue and controller stay 1:1 at all times.
+	 */
+	private fun watchForLibraryArrival(ytSong: DomainSong) {
+		if (!YouTubeRepository.isYouTubeSong(ytSong)) return
+		if (ytMatchJobs.containsKey(ytSong.id)) return
+		ytMatchJobs[ytSong.id] = viewModelScope.launch {
+			try {
+				val deadline = System.currentTimeMillis() + 20 * 60 * 1000L
+				while (System.currentTimeMillis() < deadline) {
+					delay(10_000L)
+					val match = withContext(Dispatchers.IO) {
+						searchRepository.findLibraryMatchFor(ytSong)
+					} ?: continue
+					if (_uiState.value.queue.any { it.id == ytSong.id }) {
+						swapYouTubeWithLibrary(ytSong.id, match)
+					} else {
+						appendLibraryMatch(match)
+					}
+					return@launch
+				}
+				Logger.i("MediaPlayer", "gave up waiting for library match for ${ytSong.id}")
+			} catch (e: Exception) {
+				if (e is kotlinx.coroutines.CancellationException) throw e
+				Logger.w("MediaPlayer", "library arrival watch failed for ${ytSong.id}", e)
+			} finally {
+				ytMatchJobs.remove(ytSong.id)
+				ytPending.remove(ytSong.id)
+			}
+		}
+	}
+
+	private fun appendLibraryMatch(match: DomainSong) = launchInView {
+		val queue = _uiState.value.queue
+		if (queue.any { it.id == match.id }) return@launchInView
+		val index = queue.size
+		val startPlaying = index == 0
+		val item = withContext(Dispatchers.Default) { match.toMediaItem() }
+		controller?.addMediaItem(item)
+		_uiState.update { state ->
+			state.copy(
+				queue = state.queue + match,
+				currentIndex = if (state.currentIndex == -1) index else state.currentIndex,
+				currentSong = if (state.currentIndex == -1) match else state.currentSong,
+				isLoading = if (state.currentIndex == -1) true else state.isLoading
+			)
+		}
+		if (startPlaying) {
+			controller?.let { player ->
+				player.seekTo(index, 0L)
+				player.prepare()
+				player.play()
+			}
+		} else {
+			snackBarManager.notifyAddedToQueue()
 		}
 	}
 
@@ -901,7 +941,6 @@ class AndroidMediaPlayerViewModel(
 					}
 				}
 			}
-			ytMetubeOk.remove(ytId)
 			_uiState.update { state ->
 				state.copy(
 					queue = state.queue.map { if (it.id == ytId) match else it },
@@ -916,19 +955,10 @@ class AndroidMediaPlayerViewModel(
 	}
 
 	private suspend fun resolveSongForPlayback(song: DomainSong): DomainSong? {
+		// YouTube entries never resolve to direct streams: they only play
+		// once fetched into the library via MeTube.
 		if (!YouTubeRepository.isYouTubeSong(song)) return song
-		if (!song.filePath.isNullOrEmpty() && song.filePath.contains("googlevideo.com")) return song
-		// NOTE: deliberately does not touch isLoading; callers that start
-		// playback set it, and ExoPlayer buffering state drives the rest.
-		// Setting it here would leave queue-only operations stuck on loading.
-		return try {
-			withContext(Dispatchers.IO) { youTubeRepository.resolveSong(song) }
-		} catch (e: kotlinx.coroutines.CancellationException) {
-			throw e
-		} catch (e: Exception) {
-			Logger.w("MediaPlayer", "failed to resolve YouTube stream for ${song.id}", e)
-			null
-		}
+		return null
 	}
 
 	private fun failPlayback(message: String) = launchInView(true) {
@@ -957,25 +987,8 @@ class AndroidMediaPlayerViewModel(
 			return@launchInView
 		}
 		_uiState.update { it.copy(isLoading = true) }
-		// The resolve endpoint is flaky sometimes; retry before concluding
-		// anything. Only a MeTube failure is fatal: if MeTube accepted the
-		// song it will arrive in Navidrome, so stay open and wait for it.
-		val resolved = resolveWithRetry(song)
-		if (resolved != null) {
-			controller?.let { player ->
-				player.stop()
-				player.clearMediaItems()
-				player.setMediaItem(withContext(Dispatchers.Default) { resolved.toMediaItem() })
-				player.prepare()
-				player.play()
-			}
-			_uiState.update { state ->
-				state.copy(queue = listOf(resolved), currentIndex = 0, currentSong = resolved, isLoading = true)
-			}
-			checkAndAutoFillQueue()
-			sendYouTubeToMeTube(resolved)
-			return@launchInView
-		}
+		// No YouTube streaming: hand it to MeTube and wait for the library
+		// copy, then play. Only a MeTube failure ends in an error.
 		if (sendToMeTubeNow(song)) {
 			controller?.let { player ->
 				player.stop()
@@ -984,6 +997,7 @@ class AndroidMediaPlayerViewModel(
 			_uiState.update { state ->
 				state.copy(queue = listOf(song), currentIndex = 0, currentSong = song, isLoading = true)
 			}
+			watchForLibraryMatch(song)
 			return@launchInView
 		}
 		failPlayback("Couldn't load this YouTube song.")
@@ -993,56 +1007,77 @@ class AndroidMediaPlayerViewModel(
 		val songs = if (collection is DomainAlbum) collection.songs.sortedWith(
 			compareBy({ it.discNumber }, { it.trackNumber })
 		) else collection.songs
-		// Album play with YouTube tracks: fetch the external ones server-side
-		// first, then play everything (streams instantly, library follows).
-		songs.filter { YouTubeRepository.isYouTubeSong(it) }.forEach { sendYouTubeToMeTube(it) }
 		playNow(songs, startIndex)
 	}
 
 	override fun playNow(songs: List<DomainSong>, startIndex: Int) = launchInView {
 		if (songs.none { YouTubeRepository.isYouTubeSong(it) }) {
+			if (songs.isEmpty()) {
+				clearQueue()
+				return@launchInView
+			}
 			clearQueue()
 			addToQueue(songs, notify = false)
 			playAt(startIndex)
 			checkAndAutoFillQueue()
 			return@launchInView
 		}
-		_uiState.update { it.copy(isLoading = true) }
-		val resolvedSongs = withContext(Dispatchers.IO) { songs.mapNotNull { resolveSongForPlayback(it) } }
-		if (resolvedSongs.isEmpty()) {
-			val first = songs.getOrNull(startIndex.coerceIn(songs.indices)) ?: songs.first()
-			if (YouTubeRepository.isYouTubeSong(first) && sendToMeTubeNow(first)) {
+		if (songs.size == 1) {
+			// Single external song: same wait-for-library flow as tapping it.
+			val only = songs[0]
+			_uiState.update { it.copy(isLoading = true) }
+			if (sendToMeTubeNow(only)) {
 				controller?.let { player ->
 					player.stop()
 					player.clearMediaItems()
 				}
 				_uiState.update { state ->
-					state.copy(queue = listOf(first), currentIndex = 0, currentSong = first, isLoading = true)
+					state.copy(queue = listOf(only), currentIndex = 0, currentSong = only, isLoading = true)
 				}
+				watchForLibraryMatch(only)
 			} else {
 				failPlayback("Couldn't load this YouTube song.")
 			}
 			return@launchInView
 		}
-		val items = withContext(Dispatchers.Default) { resolvedSongs.map { it.toMediaItem() } }
-		val safeIndex = startIndex.coerceIn(0, (resolvedSongs.size - 1).coerceAtLeast(0))
+		// Mixed queue: play what's already in the library now; external
+		// tracks are fetched in the background and join as they arrive.
+		val ready = songs.filter { !YouTubeRepository.isYouTubeSong(it) }
+		songs.filter { YouTubeRepository.isYouTubeSong(it) }.forEach {
+			if (sendToMeTubeNow(it)) watchForLibraryArrival(it)
+		}
+		if (ready.isEmpty()) {
+			controller?.let { player ->
+				player.stop()
+				player.clearMediaItems()
+			}
+			_uiState.update {
+				it.copy(queue = emptyList(), currentSong = null, currentIndex = -1, isLoading = false)
+			}
+			snackBarManager.notify(R.string.notice_download_started)
+			return@launchInView
+		}
+		val safeStart = songs.take(startIndex.coerceIn(songs.indices))
+			.count { !YouTubeRepository.isYouTubeSong(it) }
+			.coerceIn(ready.indices)
+		_uiState.update { it.copy(isLoading = true) }
+		val items = withContext(Dispatchers.Default) { ready.map { it.toMediaItem() } }
 		controller?.let { player ->
 			player.stop()
 			player.clearMediaItems()
-			player.setMediaItems(items, safeIndex, 0L)
+			player.setMediaItems(items, safeStart, 0L)
 			player.prepare()
 			player.play()
 		}
 		_uiState.update { state ->
 			state.copy(
-				queue = resolvedSongs,
-				currentIndex = safeIndex,
-				currentSong = resolvedSongs.getOrNull(safeIndex),
+				queue = ready,
+				currentIndex = safeStart,
+				currentSong = ready.getOrNull(safeStart),
 				isLoading = true
 			)
 		}
 		checkAndAutoFillQueue()
-		resolvedSongs.getOrNull(safeIndex)?.let { sendYouTubeToMeTube(it) }
 	}
 
 	private fun DomainSong.toMediaItem(): MediaItem {
