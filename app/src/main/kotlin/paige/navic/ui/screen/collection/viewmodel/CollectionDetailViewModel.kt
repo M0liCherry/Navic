@@ -147,9 +147,15 @@ class CollectionDetailViewModel(
 		viewModelScope.launch {
 			collectionState.value = UiState.Loading(collectionState.value.data)
 			try {
-				val browseId = collectionId
+				// Tolerant: recover MPREb_… from well-formed and
+				// historically-mangled (double-prefixed) ids alike.
+				val rawId = collectionId
 					.removePrefix(YouTubeRepository.PREFIX)
+					.trimStart('-')
 					.removePrefix("album-")
+				val browseId = rawId
+					.takeIf { it.matches(Regex("MPREb_[A-Za-z0-9_-]+")) }
+					?: throw IllegalArgumentException("Not a YouTube album: $collectionId")
 				val ytAlbum = youTubeRepository.getAlbum(browseId)
 				val serverSongs = findServerAlbumSongs(
 					artist = ytAlbum.artistName,

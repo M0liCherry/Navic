@@ -312,7 +312,10 @@ class YouTubeRepository(
 			)
 			setBody(requestJson)
 		}
-		if (!response.status.isSuccess()) throw IllegalStateException("browse failed: ${response.status}")
+		if (!response.status.isSuccess()) {
+			val detail = runCatching { response.bodyAsText().take(300) }.getOrDefault("?")
+			throw IllegalStateException("browse failed: ${response.status} $detail")
+		}
 		val root = json.parseToJsonElement(response.bodyAsText()).jsonObject
 		val columns = root.obj("contents")?.obj("twoColumnBrowseResultsRenderer")
 			?: throw IllegalStateException("no album contents")

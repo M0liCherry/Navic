@@ -135,11 +135,16 @@ class SearchRepository(
 		if (wantedTitle.isBlank()) return null
 		return try {
 			// Local DB first: covers the manual-refresh case with no roundtrip.
-			localMatch(wantedTitle, wantedArtist)?.let { return it }
+			// Bilingual titles ("X - Y") are also tried by leading segment,
+			// since servers often keep only one half.
+			val variants = queryVariants(ytSong.title)
+			for (q in variants) {
+				localMatch(q, wantedTitle, wantedArtist)?.let { return it }
+			}
 
 			val fullQuery = listOfNotNull(ytSong.artistName, ytSong.title).joinToString(" ")
 			serverMatch(fullQuery, wantedTitle, wantedArtist)
-				?: serverMatch(ytSong.title, wantedTitle, wantedArtist)
+				?: variants.drop(1).firstNotNullOfOrNull { serverMatch(it, wantedTitle, wantedArtist) }
 		} catch (e: Exception) {
 			if (e is CancellationException) throw e
 			Logger.w("SearchRepository", "library match lookup failed for ${ytSong.id}", e)
@@ -147,9 +152,20 @@ class SearchRepository(
 		}
 	}
 
-	private suspend fun localMatch(wantedTitle: String, wantedArtist: String): DomainSong? {
+	private fun queryVariants(title: String): List<String> {
+		val out = mutableListOf(title)
+		for (sep in listOf(" - ", " – ", " — ", "/", "／", "(", "[", "～", "~", "|", "｜")) {
+			val head = title.split(sep, limit = 2).firstOrNull()?.trim()
+			if (!head.isNullOrBlank() && head.length < title.length && head.length >= 2) {
+				out += head
+			}
+		}
+		return out.distinct().take(3)
+	}
+
+	private suspend fun localMatch(query: String, wantedTitle: String, wantedArtist: String): DomainSong? {
 		return try {
-			songDao.searchSongsList(wantedTitle)
+			songDao.searchSongsList(query)
 				.map { it.toDomainModel() }
 				.mapNotNull { song ->
 					scoreMatch(wantedTitle, wantedArtist, normalize(song.title), normalize(song.artistName ?: ""))
