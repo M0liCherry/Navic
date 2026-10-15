@@ -833,18 +833,16 @@ class AndroidMediaPlayerViewModel(
 		ytMatchJobs[ytSong.id] = viewModelScope.launch {
 			try {
 				// Check immediately: the song may already be scanned
-				// (e.g. downloaded earlier or manual refresh).
-				if (_uiState.value.queue.any { it.id == ytSong.id }) {
-					withContext(Dispatchers.IO) {
-						searchRepository.findLibraryMatchFor(ytSong)
-					}?.let {
-						swapYouTubeWithLibrary(ytSong.id, it)
-						return@launch
-					}
-				} else {
+				// (e.g. downloaded earlier or manual refresh). This runs
+				// before the queue is guaranteed to hold the item, so a
+				// missing entry here must not stop the watch.
+				withContext(Dispatchers.IO) {
+					searchRepository.findLibraryMatchFor(ytSong)
+				}?.let {
+					swapYouTubeWithLibrary(ytSong.id, it)
 					return@launch
 				}
-				var delayMs = 20_000L
+				if (_uiState.value.queue.none { it.id == ytSong.id }) return@launch
 				val deadline = System.currentTimeMillis() + 20 * 60 * 1000L
 				while (System.currentTimeMillis() < deadline) {
 					delay(10_000L)
