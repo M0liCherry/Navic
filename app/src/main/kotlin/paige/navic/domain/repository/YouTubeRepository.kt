@@ -335,15 +335,15 @@ class YouTubeRepository(
 		val thumb = header.obj("thumbnail")?.obj("musicThumbnailRenderer")
 			?.obj("thumbnail")?.arr("thumbnails")?.lastOrNull()
 			.let { it as? JsonObject }?.str("url")
-		val shelf = ((columns.obj("secondaryContents")?.obj("sectionListRenderer")?.arr("contents")
-			?: JsonArray(emptyList())).mapNotNull { (it as? JsonObject)?.obj("musicShelfRenderer") }
-			.firstOrNull())
+		val shelfRows = ((columns.obj("secondaryContents")?.obj("sectionListRenderer")?.arr("contents")
+			?: JsonArray(emptyList())).mapNotNull { (it as? JsonObject)?.obj("musicShelfRenderer") })
+			.takeIf { it.isNotEmpty() }
 			?: throw IllegalStateException("no album tracks")
 		val cached = albumCacheMutex.withLock { albumCache["$PREFIX-album-$browseId"] }
 		val artistName = cached?.artistName?.takeIf { it.isNotBlank() } ?: "Unknown artist"
-		val tracks = (shelf.arr("contents") ?: JsonArray(emptyList())).mapNotNull { el ->
+		val tracks = shelfRows.flatMap { shelf -> (shelf.arr("contents") ?: JsonArray(emptyList())) }.mapNotNull { el ->
 			val r = el as? JsonObject ?: return@mapNotNull null
-			val videoId = extractVideoId(r) ?: return@mapNotNull null
+			val videoId = extractVideoId(r) ?: findVideoId(r) ?: return@mapNotNull null
 			val trackTitle = listItemTitle(r, 0).ifBlank { return@mapNotNull null }
 			DomainSong(
 				id = "$PREFIX$videoId",
@@ -592,6 +592,23 @@ class YouTubeRepository(
 		r.obj("playlistItemData")
 			?.str("videoId")?.let { return it }
 		return null
+	}
+
+	/**
+	 * Last-resort video id hunt: some rows only carry the id deep inside
+	 * menu/title endpoints. Scoped to a single row so ids can't leak across.
+	 */
+	private fun findVideoId(element: kotlinx.serialization.json.JsonElement): String? {
+		return when (element) {
+			is JsonObject -> {
+				for (key in listOf("watchEndpoint", "watchPlaylistEndpoint")) {
+					(element[key] as? JsonObject)?.str("videoId")?.let { return it }
+				}
+				element.values.firstNotNullOfOrNull { findVideoId(it) }
+			}
+			is kotlinx.serialization.json.JsonArray -> element.firstNotNullOfOrNull { findVideoId(it) }
+			else -> null
+		}
 	}
 
 	private fun runsText(text: kotlinx.serialization.json.JsonElement): String {
