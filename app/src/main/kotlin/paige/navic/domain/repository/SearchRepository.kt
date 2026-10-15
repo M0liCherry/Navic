@@ -168,7 +168,7 @@ class SearchRepository(
 			songDao.searchSongsList(query)
 				.map { it.toDomainModel() }
 				.mapNotNull { song ->
-					scoreMatch(wantedTitle, wantedArtist, normalize(song.title), normalize(song.artistName ?: ""))
+					bestScore(wantedTitle, wantedArtist, normalize(song.title), normalize(song.artistName ?: ""))
 						?.let { score -> song to score }
 				}
 				.maxByOrNull { it.second }
@@ -189,7 +189,7 @@ class SearchRepository(
 		if (data.songs.isEmpty()) return null
 		val best = data.songs
 			.mapNotNull { remote ->
-				scoreMatch(
+				bestScore(
 					wantedTitle,
 					wantedArtist,
 					normalize(remote.title),
@@ -206,7 +206,17 @@ class SearchRepository(
  /**
 	 * Fuzzy match score, or null for no match. Titles must clearly agree;
 	 * artists must not contradict (covers/same-name songs stay out).
+	 * Server files often prefix the artist ("Drake - HYFR…"), so that
+	 * prefix is also tried stripped.
 	 */
+	private fun bestScore(wantedTitle: String, wantedArtist: String, title: String, artist: String): Int? {
+		val direct = scoreMatch(wantedTitle, wantedArtist, title, artist)
+		if (artist.isBlank()) return direct
+		val stripped = title.removePrefix("$artist ").takeIf { it != title } ?: return direct
+		val strippedScore = scoreMatch(wantedTitle, wantedArtist, stripped, artist)
+		return listOfNotNull(direct, strippedScore).maxOrNull()
+	}
+
 	private fun scoreMatch(wantedTitle: String, wantedArtist: String, title: String, artist: String): Int? {
 		val wantedTitleFlat = wantedTitle.filterNot { it == ' ' }
 		val titleFlat = title.filterNot { it == ' ' }
